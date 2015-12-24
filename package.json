@@ -3,8 +3,15 @@
   "version": "0.1.0",
   "description": "Frontend test for XYZ",
   "dependencies": {
-   },
+    "angular": "^1.4.8",
+    "ngreact": "^0.2.0",
+    "react": "^0.14.3",
+    "react-dom": "^0.14.3"
+  },
   "devDependencies": {
+    "babelify": "^7.2.0",
+    "browserify": "^12.0.1",
+    "yuicompressor": "^2.4.8"
   },
   "scripts": {
     "build": "browserify -t babelify public/app/app.js -o public/js/bundle.js",
