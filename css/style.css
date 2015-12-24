@@ -1,0 +1,104 @@
+@charset "utf-8";
+/* CSS Document */
+
+body {
+    font-family: Open Sans, Arial, Gotham, "Helvetica Neue", Helvetica, sans-serif;
+}
+
+.container {
+    margin: auto;
+    width: 1000px;
+}
+
+.column {
+    float: left;
+}
+
+.column.two {
+    width: 50%;
+}
+
+h1, h2, h3, h4, h5, h6, a {
+    color: #E15260;
+}
+
+h3 {
+    font-size: 1.8em;
+    font-weight: 300;
+}
+
+.left {
+    float: left;
+}
+
+.right {
+    float: right;
+}
+
+.last {
+    margin-right: 0;
+    padding-right: 0;
+}
+
+.featured {
+    background-color: #E15260;
+    min-width: 1000px;
+}
+
+header {
+    padding: 35px 0;
+}
+
+header #top-bar {
+    overflow: hidden;
+}
+
+header .logo img {
+    width: 300px;
+}
+
+header nav a {
+    color: #fff;
+    display: block;
+    float: left;
+    font-size: 14px;
+    font-weight: 600;
+    margin-right: 182px;
+    text-decoration: none;
+    text-transform: uppercase;
+}
+
+.featured-content {
+    overflow: hidden;
+}
+
+.featured-action .form-container {
+    background-color: #e1e1e1;
+    width: 380px;
+    height: 400px;
+}
+
+
+.content {
+    min-width: 1000px;
+}
+
+footer #footer-top {
+    overflow: hidden;
+}
+
+footer .logo img {
+    width: 200px;
+}
+
+footer nav a {
+    color: #000;
+    display: block;
+    float: left;
+    font-size: 14px;
+    font-weight: 600;
+    margin-right: 25px;
+    text-decoration: none;
+    text-transform: uppercase;
+}
+
