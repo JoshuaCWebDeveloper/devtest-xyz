@@ -83,10 +83,6 @@ header nav a {
     min-width: 1000px;
 }
 
-footer #footer-top {
-    overflow: hidden;
-}
-
 footer .logo img {
     width: 200px;
 }
