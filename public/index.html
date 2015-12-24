@@ -6,10 +6,13 @@
     <link rel="stylesheet" type="text/css" href="css/style.css" />
     <link href='https://fonts.googleapis.com/css?family=Open+Sans:400,300,600,700' rel='stylesheet' type='text/css' />
     
+    <!-- Bundled JS file with all dependencies and app.js -->
+    <script type="text/javascript" src="js/bundle.min.js"></script> -->
+    
     <title>DEVTEST.xyz</title>
 </head>
 
-<body>
+<body data-ng-app="DEVTEST.xyz">
 
 <div class="featured">
     
@@ -45,8 +48,12 @@
             
             <div class="featured-action column two right">
                 
-                <div class="form-container"> </div>
-            
+                <div class="form-container"> 
+                    <h1>Do This Thing!</h1>
+                    
+                    <ng-view></ng-view>
+                </div>
+                
             </div>
             
         </div>
