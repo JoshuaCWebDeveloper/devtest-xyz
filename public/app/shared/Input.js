@@ -10,8 +10,12 @@ import React from 'react';
 //create Input react component
 var Input = class extends React.Component {
     render () {
+        var className = "input-group column two";
+        if (this.props.float) {
+            className += " " + this.props.float;
+        }
         return (
-            <div className="input-group column two">
+            <div className={className}>
                 <label htmlFor={this.props.name}>{this.props.label}</label>
                 <input type={this.props.type} name={this.props.name} />
             </div>
@@ -22,7 +26,8 @@ var Input = class extends React.Component {
 Input.propTypes = {
     name: React.PropTypes.string,
     label: React.PropTypes.string,
-    type: React.PropTypes.string
+    type: React.PropTypes.string,
+    float: React.PropTypes.string
 };
 //export component
 export { Input };

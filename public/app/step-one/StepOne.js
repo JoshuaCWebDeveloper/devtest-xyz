@@ -23,10 +23,10 @@ var StepOneController = class {
             return (
                 <form name="featured" method="get" action="#">
                     
-                    <Input type="text" name="first" label="First Name" />
-                    <Input type="text" name="last" label="Last Name" />
-                    <Input type="text" name="email" label="Email Address" />
-                    <Input type="text" name="zip" label="Zip Code" />
+                    <Input type="text" name="first" label="First Name" float="left" />
+                    <Input type="text" name="last" label="Last Name" float="right" />
+                    <Input type="text" name="email" label="Email Address" float="left" />
+                    <Input type="text" name="zip" label="Zip Code" float="right" />
                     
                     <Next />
                     
