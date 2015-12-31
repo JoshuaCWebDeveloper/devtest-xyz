@@ -10,7 +10,7 @@ import React from 'react';
 //create Input react component
 var Input = class extends React.Component {
     render () {
-        var className = "input-group column two";
+        var className = "input-group";
         if (this.props.float) {
             className += " " + this.props.float;
         }

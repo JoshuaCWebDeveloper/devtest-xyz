@@ -11,7 +11,7 @@ import React from 'react';
 var Next = class extends React.Component {
     render () {
         return (
-            <div className="input-group column two right">
+            <div className="input-group right">
                 <button type="submit" name="next">
                     Next <span className="xyz-icon">1</span>
                 </button>

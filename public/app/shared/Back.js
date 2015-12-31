@@ -11,7 +11,7 @@ import React from 'react';
 var Back = class extends React.Component {
     render () {
         return (
-            <div className="input-group column two left">
+            <div className="input-group left">
                 <button type="button" name="back">Back</button>
             </div>
         );

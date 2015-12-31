@@ -18,7 +18,7 @@ var Select = class extends React.Component {
             );
         };
         return (
-            <div className="input-group column two">
+            <div className="input-group">
                 <label htmlFor={this.props.name}>{this.props.label}</label>
                 <select name={this.props.name}>
                     {optionNodes}
