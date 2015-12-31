@@ -15,6 +15,7 @@ import ngRouteModule from 'angular-route';
 import React from 'react';
 import ngReact from 'ngreact';
 //include components
+import { MenuDirective } from './menu/Menu.js';
 import { StepOneDirective } from './step-one/StepOne.js';
 //include services
 //include other objects
@@ -25,5 +26,6 @@ var app = angular.module('DEVTEST.xyz', ['react', 'ngRoute'])
     //create constants
     //create services
     //wrap React components in Angular directives
+    .directive("menu", MenuDirective)
     .directive("stepOne", StepOneDirective);
     
