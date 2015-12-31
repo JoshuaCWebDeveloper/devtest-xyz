@@ -277,8 +277,12 @@ footer .container {
     overflow: hidden;
 }
 
-footer .logo img {
+footer .logo {
     width: 200px;
+}
+
+footer .logo img {
+    width: 100%;
 }
 
 footer nav.column.two {
@@ -302,5 +306,17 @@ footer p {
     font-weight: 300;
     margin: 0;
     text-shadow: 1px 0 0 #ddd;
+}
+
+
+
+@media (max-width: 1029px) {
+    
+    .container { max-width: 700px; }
+    
+    header nav a { margin-right: 107px; }
+
+    .featured-text h1 { font-size: 1.9em; max-width: 300px; }
+        
 }
 
