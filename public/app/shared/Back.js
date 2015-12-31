@@ -11,7 +11,9 @@ import React from 'react';
 var Back = class extends React.Component {
     render () {
         return (
-            <input type="button" name="back" value="Back" />
+            <div className="input-group column two left">
+                <button type="button" name="back">Back</button>
+            </div>
         );
     }
 };
