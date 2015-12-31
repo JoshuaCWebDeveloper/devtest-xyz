@@ -16,7 +16,7 @@ import React from 'react';
 import ngReact from 'ngreact';
 //include components
 import { MenuDirective } from './menu/Menu.js';
-import { StepOneDirective } from './step-one/StepOne.js';
+import { StepOneDirective } from './form/step-one/StepOne.js';
 //include services
 //include other objects
 import { config } from './config.js';

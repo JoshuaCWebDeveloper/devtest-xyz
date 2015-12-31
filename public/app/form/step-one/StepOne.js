@@ -15,7 +15,7 @@ import { Input } from '../shared/Input.js';
 import { Next } from '../shared/Next.js';
 //create controller for StepOne
 var StepOneController = class {
-        
+
     },
     //create StepOne React component
     StepOne = class extends React.Component {
