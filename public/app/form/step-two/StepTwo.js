@@ -87,7 +87,7 @@ var StepTwoController = class {
                         onChange={this.createHandleChange('state').bind(this)}  
                     />
                     <MaskedInput 
-                        type="date" name="birth" label="Birthdate" float="left" 
+                        type="text" name="birth" label="Birthdate" float="left" 
                         value={this.props.t.fields.birth} 
                         onChange={this.createHandleChange('birth').bind(this)} 
                         mask="99 / 99 / 9999"
