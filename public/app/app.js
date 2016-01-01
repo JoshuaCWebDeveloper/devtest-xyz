@@ -17,6 +17,8 @@ import ngReact from 'ngreact';
 //include components
 import { MenuDirective } from './menu/Menu.js';
 import { StepOneDirective } from './form/step-one/StepOne.js';
+import { StepTwoDirective } from './form/step-two/StepTwo.js';
+import { StepThreeDirective } from './form/step-three/StepThree.js';
 //include services
 import { FormDispatcher } from './form/flux/FormDispatcher.js';
 import { FormStore } from './form/flux/FormStore.js';
@@ -39,5 +41,7 @@ var app = angular.module('DEVTEST.xyz', ['react', 'ngRoute'])
     .service('GetLocation', GetLocation)
     //wrap React components in Angular directives
     .directive("menu", MenuDirective)
-    .directive("stepOne", StepOneDirective);
+    .directive("stepOne", StepOneDirective)
+    .directive("stepTwo", StepTwoDirective)
+    .directive("stepThree", StepThreeDirective);
     
