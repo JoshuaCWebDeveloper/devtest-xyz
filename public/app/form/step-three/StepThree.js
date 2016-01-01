@@ -1,7 +1,7 @@
 /* StepThree.js
  * Displays step three
  * Dependencies: React
-    - components: Input, Select, Back, Submit
+    - components: MaskedInput, Input, Select, Back, Submit
     - services: FormStore, FormActions
     - resources: $scope, $location
  * Author: Joshua Carter
@@ -11,6 +11,7 @@
 //include modules
 import React from 'react';
 //include components
+import { MaskedInput } from '../shared/MaskedInput.js';
 import { Input } from '../shared/Input.js';
 import { Select } from '../shared/Select.js';
 import { Back } from '../shared/Back.js';
@@ -69,15 +70,17 @@ var StepThreeController = class {
             return (
                 <form name="featured" method="get" action="#" onSubmit={this.handleSubmit.bind(this)}>
                     
-                    <Input 
+                    <MaskedInput 
                         type="date" name="paydate1" label="Pay Date 1" float="left" 
                         value={this.props.t.fields.paydate1} 
                         onChange={this.createHandleChange('paydate1').bind(this)}  
+                        mask="99 / 99 / 9999"
                     />
-                    <Input 
+                    <MaskedInput 
                         type="date" name="paydate2" label="Pay Date 2" float="right" 
                         value={this.props.t.fields.paydate2} 
                         onChange={this.createHandleChange('paydate2').bind(this)}  
+                        mask="99 / 99 / 9999"
                     />
                     <Select 
                         name="employment" label="Employment Type" float="left" 

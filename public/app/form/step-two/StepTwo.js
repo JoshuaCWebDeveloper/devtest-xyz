@@ -1,7 +1,7 @@
 /* StepTwo.js
  * Displays step two
  * Dependencies: React, us
-    - components: Input, Select, Back, Next
+    - components: MaskedInput, Input, Select, Back, Next
     - services: FormStore, FormActions
     - resources: $scope, $location
  * Author: Joshua Carter
@@ -12,6 +12,7 @@
 import React from 'react';
 import us from 'us';
 //include components
+import { MaskedInput } from '../shared/MaskedInput.js';
 import { Input } from '../shared/Input.js';
 import { Select } from '../shared/Select.js';
 import { Back } from '../shared/Back.js';
@@ -85,15 +86,17 @@ var StepTwoController = class {
                         value={this.props.t.fields.state} 
                         onChange={this.createHandleChange('state').bind(this)}  
                     />
-                    <Input 
+                    <MaskedInput 
                         type="date" name="birth" label="Birthdate" float="left" 
                         value={this.props.t.fields.birth} 
-                        onChange={this.createHandleChange('birth').bind(this)}  
+                        onChange={this.createHandleChange('birth').bind(this)} 
+                        mask="99 / 99 / 9999"
                     />
-                    <Input 
+                    <MaskedInput 
                         type="tel" name="phone" label="Phone Number" float="right" 
                         value={this.props.t.fields.phone} 
                         onChange={this.createHandleChange('phone').bind(this)}  
+                        mask="999 - 999 - 9999"
                     />
                     
                     <Back onClick={this.handleBack.bind(this)} />
