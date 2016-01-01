@@ -101,7 +101,7 @@ var FormStore = class extends Events.EventEmitter {
         //convert of fields to json
         var data = JSON.stringify(this._formFields),
             //open a new window
-            w = window.open('about:blank', 'Form Data', 'width=200,height=500,scrollbars,resizeable');
+            w = window.open('about:blank', 'Form Data', 'width=400,height=400,scrollbars,resizeable');
         //add data to window
         w.document.write(data);
     }
