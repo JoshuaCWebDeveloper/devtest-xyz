@@ -5,6 +5,8 @@
   "dependencies": {
     "angular": "^1.4.8",
     "angular-route": "^1.4.8",
+    "events": "^1.1.0",
+    "flux": "^2.1.1",
     "ngreact": "^0.2.0",
     "react": "^0.14.3",
     "react-dom": "^0.14.3"
