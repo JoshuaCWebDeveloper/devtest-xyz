@@ -23,9 +23,7 @@ var StepTwoController = class {
             var usst = us.STATES_AND_TERRITORIES,
                 //create listener for changes on the store
                 changeListener = function () {
-                    console.log('change');
                     this.getFormFields();
-                    console.log(this);
                     //this function is called outside of Angular, apply changes to scope
                     $scope.$apply();
                 }.bind(this);
