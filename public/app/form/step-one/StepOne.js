@@ -48,20 +48,59 @@ var StepOneController = class {
     },
     //create StepOne React component
     StepOne = class extends React.Component {
+        constructor(props) {
+            super(props);
+            //create collection to store field values
+            this.fields = {};    
+        }
+        
         render () {
             return (
-                <form name="featured" method="get" action="#">
+                <form name="featured" method="get" action="#" onSubmit={this.handleSubmit.bind(this)}>
                     
-                    <Input type="text" name="first" label="First Name" float="left" />
-                    <Input type="text" name="last" label="Last Name" float="right" />
-                    <Input type="text" name="email" label="Email Address" float="left" />
-                    <Input type="text" name="zip" label="Zip Code" float="right" />
+                    <Input 
+                        type="text" name="first" label="First Name" float="left" 
+                        value={this.props.t.fields.first} 
+                        onChange={this.createHandleChange('first').bind(this)}
+                    />
+                    <Input 
+                        type="text" name="last" label="Last Name" float="right" 
+                        value={this.props.t.fields.last} 
+                        onChange={this.createHandleChange('last').bind(this)}  
+                    />
+                    <Input 
+                        type="text" name="email" label="Email Address" float="left" 
+                        value={this.props.t.fields.email} 
+                        onChange={this.createHandleChange('email').bind(this)}  
+                    />
+                    <Input 
+                        type="text" name="zip" label="Zip Code" float="right" 
+                        value={this.props.t.fields.zip} 
+                        onChange={this.createHandleChange('zip').bind(this)} 
+                    />
                     
                     <Next />
                     
                 </form>
             );
         }
+        
+        handleSubmit (e) {
+            //prevent default
+            e.preventDefault();
+            //update form data
+            this.props.t.FormActions.update(this.fields);
+            //go to the next page
+            this.props.t.navNext();
+        }
+        
+        //create change event listener that updates specified field value
+        createHandleChange (field) {
+            return function (e) {
+                this.fields[field] = e.target.value;
+            }
+        }
+                
     },
     //create directive to wrap React component in
     StepOneDirective = function (reactDirective) {
