@@ -18,13 +18,25 @@ import ngReact from 'ngreact';
 import { MenuDirective } from './menu/Menu.js';
 import { StepOneDirective } from './form/step-one/StepOne.js';
 //include services
+import { FormDispatcher } from './form/flux/FormDispatcher.js';
+import { FormStore } from './form/flux/FormStore.js';
+import { FormActions } from './form/flux/FormActions.js';
+import { GetLocation } from './form/services/GetLocation.js';
 //include other objects
 import { config } from './config.js';
 //create app module
 var app = angular.module('DEVTEST.xyz', ['react', 'ngRoute'])
     .config(['$routeProvider', config])
     //create constants
+    .constant('FORM_ACTIONS', {
+        UPDATE: 1,
+        SUBMIT: 2
+    })
     //create services
+    .factory('FormDispatcher', FormDispatcher)
+    .service('FormStore', FormStore)
+    .service('FormActions', FormActions)
+    .service('GetLocation', GetLocation)
     //wrap React components in Angular directives
     .directive("menu", MenuDirective)
     .directive("stepOne", StepOneDirective);
