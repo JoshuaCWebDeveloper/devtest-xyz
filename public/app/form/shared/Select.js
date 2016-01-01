@@ -14,7 +14,7 @@ var Select = class extends React.Component {
         var optionNodes = [];
         for (var opt in this.props.options) {
             optionNodes.push(
-                <option val={opt}>{this.props.options[opt]}</option>
+                <option key={opt} val={opt}>{this.props.options[opt]}</option>
             );
         };
         return (
