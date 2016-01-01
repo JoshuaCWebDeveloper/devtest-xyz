@@ -12,10 +12,14 @@ var Back = class extends React.Component {
     render () {
         return (
             <div className="input-group left">
-                <button type="button" name="back">Back</button>
+                <button type="button" name="back" onClick={this.props.onClick}>Back</button>
             </div>
         );
     }
+};
+//define prop types
+Back.propTypes = {
+    onClick: React.PropTypes.func
 };
 //export component
 export { Back };
