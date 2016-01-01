@@ -1,12 +1,14 @@
 /* Select.js
  * Displays a label and select input in form
- * Dependencies: React
+ * Dependencies: React, InputGroup component
  * Author: Joshua Carter
  * Created: December 23, 2015
  */
 "use strict";
 //include modules
 import React from 'react';
+//include components
+import { InputGroup } from './InputGroup.js';
 //create Select react component
 var Select = class extends React.Component {
     constructor (props) {
@@ -34,12 +36,12 @@ var Select = class extends React.Component {
             val = this.props.value;
         }
         return (
-            <div className="input-group">
+            <InputGroup float={this.props.float}>
                 <label htmlFor={this.props.name}>{this.props.label}</label>
                 <select name={this.props.name} value={val} onChange={this.handleChange.bind(this)}>
                     {optionNodes}
                 </select>
-            </div>
+            </InputGroup>
         );
     }
     

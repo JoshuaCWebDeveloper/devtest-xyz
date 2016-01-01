@@ -1,12 +1,14 @@
 /* Input.js
  * Displays a label and input in form
- * Dependencies: React
+ * Dependencies: React, InputGroup component
  * Author: Joshua Carter
  * Created: December 23, 2015
  */
 "use strict";
 //include modules
 import React from 'react';
+//include components
+import { InputGroup } from './InputGroup.js';
 //create Input react component
 var Input = class extends React.Component {
     constructor (props) {
@@ -20,21 +22,17 @@ var Input = class extends React.Component {
     
     render () {
         //set value of our input
-        var val = this.state.value,
-            className = "input-group";
-        if (this.props.float) {
-            className += " " + this.props.float;
-        }
+        var val = this.state.value;
         //if our state's value is empty, and we received a new value from props
         if (!this.state.changed && val == '' && this.props.value != '') {
             //then update our value
             val = this.props.value;
         }
         return (
-            <div className={className}>
+            <InputGroup float={this.props.float}>
                 <label htmlFor={this.props.name}>{this.props.label}</label>
                 <input type={this.props.type} name={this.props.name} value={val} onChange={this.handleChange.bind(this)} />
-            </div>
+            </InputGroup>
         );
     }
     

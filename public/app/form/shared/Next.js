@@ -1,21 +1,23 @@
 /* Next.js
  * Displays the next button in form
- * Dependencies: React
+ * Dependencies: React, InputGroup component
  * Author: Joshua Carter
  * Created: December 23, 2015
  */
 "use strict";
 //include modules
 import React from 'react';
+//include components
+import { InputGroup } from './InputGroup.js';
 //create Next react component
 var Next = class extends React.Component {
     render () {
         return (
-            <div className="input-group right">
+            <InputGroup float="right">
                 <button type="submit" name="next">
                     Next <span className="xyz-icon">1</span>
                 </button>
-            </div>
+            </InputGroup>
         );
     }
 };
