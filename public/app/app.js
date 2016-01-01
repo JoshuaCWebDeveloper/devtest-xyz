@@ -1,9 +1,9 @@
 /* app.js
  * Used to setup app. 
  * Dependencies: 
-    - modules: angular, react, ngReact
-    - components: StepOneDirective
-    - services: 
+    - modules: angular, angular-route, react, ngReact
+    - components: StepOneDirective, StepTwoDirective, StepThreeDirective
+    - services: FormDispatcher, FormStore, FormActions
     - other: config
  * Author: Joshua Carter
  * Created: December 23, 2015
