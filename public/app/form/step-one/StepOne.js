@@ -2,8 +2,8 @@
  * Displays the team list
  * Dependencies: React, 
     - components: Input, Next
-    - services: 
-    - resources: 
+    - services: FormStore, FormActions
+    - resources: $scope, $location
  * Author: Joshua Carter
  * Created: December 23, 2015
  */
@@ -15,7 +15,36 @@ import { Input } from '../shared/Input.js';
 import { Next } from '../shared/Next.js';
 //create controller for StepOne
 var StepOneController = class {
-
+        constructor ($scope, $location, FormStore, FormActions) {
+            //create listener for changes on the store
+            var changeListener = function () {
+                    this.getFormFields();
+                    //this function is called outside of Angular, apply changes to scope
+                    $scope.$apply();
+                }.bind(this);
+                
+            this.FormStore = FormStore;
+            this.FormActions = FormActions;  
+            //create method to got to step two
+            this.navNext = function () {
+                $location.path('/step-2');
+                $scope.$apply();    
+            }
+            
+            //add listener for changes on store
+            FormStore.addChangeListener(changeListener);
+            //remove listener when we are gone
+            $scope.$on('$destroy', function () {
+                FormStore.removeChangeListener(changeListener);
+            });
+            
+            //get initial state
+            this.getFormFields();
+        }
+        
+        getFormFields() {
+            this.fields = this.FormStore.getFields(['first', 'last', 'email', 'zip']);
+        }
     },
     //create StepOne React component
     StepOne = class extends React.Component {
@@ -42,7 +71,7 @@ var StepOneController = class {
        });
     };
 //inject services and resources into controller
-StepOneController.$inject = [];
+StepOneController.$inject = ['$scope', '$location', 'FormStore', 'FormActions'];
 //define prop types of StepOne componnet
 StepOne.propTypes = {
     t: React.PropTypes.object
