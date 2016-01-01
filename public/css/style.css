@@ -1,6 +1,8 @@
 @charset "utf-8";
-/* CSS Document */
+/* Main CSS Document for DEVTEST.xyz */
 
+
+/* PROLOUGE: Font-declarations, etc... */
 @font-face {
     font-family: devtestxyz;
     src: url(../fonts/devtestxyz.eot);
@@ -8,7 +10,9 @@
     src: url(../fonts/devtestxyz.ttf);
     src: url(../fonts/devtestxyz.woff);
 }
-    
+
+ 
+/* PART 1: Template structure, common elements */   
 html, body {
     margin: 0;
     padding: 0;
@@ -104,12 +108,76 @@ p {
     font-family: devtestxyz;
 }
 
+
+/* PART 2: Form styles */
+.form-container h2 {
+    color: #5a5a5a;
+    margin-top: 17px;
+    margin-bottom: 10px;
+    text-align: center;
+}
+
+.form-container .input-group {
+    margin-top: 27px;
+    width: 155px;
+}
+
+.form-container label {
+    color: #4c536a;
+    font-size: .75em;
+    font-weight: 600;
+    letter-spacing: 1px;
+    text-shadow: 0px -1px #ccc;
+    text-transform: uppercase;
+}
+
+.form-container input, .form-container button {
+    border: 0;
+    box-sizing: content-box;
+    display: block;
+    font-size: 1.1em;
+    font-weight: 300;
+    margin-top: 2px;
+    padding: 10px 10px;
+    text-shadow: -1px 0px #eee;
+    width: 135px;
+    height: 20px;
+}
+
+.form-container button {
+    background-color: #F69679;
+    color: #fff;
+    font-size: 1.8em;
+    line-height: 0;
+    margin-top: 10px;
+    padding: 13px 15px;
+    text-align: left;
+    text-shadow: none;
+    height: 24px;
+    width: 125px;
+}
+
+.form-container span {
+    display: block;
+    float: left;
+}
+
+.form-container button .xyz-icon {
+    display: block;
+    font-size: .85em;
+    float: right;
+    margin: 2px 4px -10px 0;
+}
+
+
+/* PART 3: Top Red "Featured" section */
 .featured {
     background-color: #E15260;
     padding-bottom: 150px;
     width: 100%;
 }
 
+/* PART 3 SECTION 1: Header */
 header {
     padding: 0;
 }
@@ -175,6 +243,7 @@ header nav a {
     text-transform: uppercase;
 }
 
+/* PART 3 Section 2: Featured content (title, form) */
 .featured-content {
     overflow: hidden;
     padding-top: 105px;
@@ -198,67 +267,8 @@ header nav a {
     height: 399px;
 }
 
-.form-container h2 {
-    color: #5a5a5a;
-    margin-top: 17px;
-    margin-bottom: 10px;
-    text-align: center;
-}
 
-.form-container .input-group {
-    margin-top: 27px;
-    width: 155px;
-}
-
-.form-container label {
-    color: #4c536a;
-    font-size: .75em;
-    font-weight: 600;
-    letter-spacing: 1px;
-    text-shadow: 0px -1px #ccc;
-    text-transform: uppercase;
-}
-
-.form-container input, .form-container button {
-    border: 0;
-    box-sizing: content-box;
-    display: block;
-    font-size: 1.1em;
-    font-weight: 300;
-    margin-top: 2px;
-    padding: 10px 10px;
-    text-shadow: -1px 0px #eee;
-    width: 135px;
-    height: 20px;
-}
-
-.form-container button {
-    background-color: #F69679;
-    color: #fff;
-    font-size: 1.8em;
-    line-height: 0;
-    margin-top: 10px;
-    padding: 13px 15px;
-    text-align: left;
-    text-shadow: none;
-    height: 24px;
-    width: 125px;
-}
-
-.form-container span {
-    display: block;
-    float: left;
-}
-
-.form-container button .xyz-icon {
-    display: block;
-    font-size: .85em;
-    float: right;
-    margin: 2px 4px -10px 0;
-}
-
-
-
+/* PART 4: Page Content */
 .content {
     overflow: hidden;
     padding-bottom: 100px;
@@ -271,6 +281,8 @@ header nav a {
     text-shadow: 1px 0 0 #eee;
 }
 
+
+/* PART 4: Footer */
 footer {
     width: 100%;
 }
@@ -315,10 +327,19 @@ footer p {
     text-shadow: 1px 0 0 #ddd;
 }
 
+
+/* PART 6: Responsive styles */
+/* Desktop - 1030px and up (design specification)
+ * Tablet  - 768px - 1029px
+ * Mobile  - 300px - 767px
+ */
+
+/* All except mobile */ 
 @media (min-width: 768px) {
     #nav-dropdown { display: none; }
 }
 
+/* Tablet */
 @media (max-width: 1029px) {
     
     .container { max-width: 700px; }
@@ -329,6 +350,7 @@ footer p {
         
 }
 
+/* Mobile */
 @media (max-width: 767px) {
     
     .container { max-width: 300px; }
@@ -379,4 +401,3 @@ footer p {
     footer nav a { float: none; margin: 0; }
     footer .container { padding-bottom: 110px; }
 }
-
