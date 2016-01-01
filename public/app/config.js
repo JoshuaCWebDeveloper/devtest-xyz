@@ -11,6 +11,12 @@ var config = function ($routeProvider) {
             .when('/', {
                 template: '<step-one t="scope"></step-one>'
             })
+            .when('/step-2', {
+                template: '<step-two t="scope"></step-two>'
+            })
+            .when('/step-3', {
+                template: '<step-three t="scope"></step-three>'
+            })
             .otherwise({
                 redirectTo: '/'
             });
