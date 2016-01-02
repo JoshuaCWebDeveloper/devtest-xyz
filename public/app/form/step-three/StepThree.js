@@ -84,7 +84,7 @@ var StepThreeController = class {
                     />
                     <Select 
                         name="employment" label="Employment Type" float="left" 
-                        options={employment} 
+                        options={employment} small={true}
                         value={this.props.t.fields.employment} 
                         onChange={this.createHandleChange('employment').bind(this)}  
                     />

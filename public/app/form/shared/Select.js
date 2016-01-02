@@ -23,24 +23,32 @@ var Select = class extends React.Component {
     render () {
         //set value of our input
         var val = this.state.value,
-            optionNodes = [];
+            optionNodes = [],
+            className = "select";
         //loop options
         for (var opt in this.props.options) {
             optionNodes.push(
                 <option key={opt} val={opt}>{this.props.options[opt]}</option>
             );
         };
+        //if we are small
+        if (this.props.small) {
+            className += " small";
+        }
         //if our state's value is empty, and we received a new value from props
         if (!this.state.changed && !val && this.props.value != '') {
             //then update our value
             val = this.props.value;
         }
         return (
-            <InputGroup float={this.props.float}>
+            <InputGroup className={className} float={this.props.float}>
                 <label htmlFor={this.props.name}>{this.props.label}</label>
                 <select name={this.props.name} value={val} onChange={this.handleChange.bind(this)}>
                     {optionNodes}
                 </select>
+                <div className="select-background">
+                    <button className="xyz-icon">6</button>
+                </div>
             </InputGroup>
         );
     }
@@ -64,7 +72,8 @@ Select.propTypes = {
     options: React.PropTypes.object,
     value: React.PropTypes.node,
     float: React.PropTypes.string,
-    onChange: React.PropTypes.func
+    onChange: React.PropTypes.func,
+    small: React.PropTypes.node
 };
 //export component
 export { Select };

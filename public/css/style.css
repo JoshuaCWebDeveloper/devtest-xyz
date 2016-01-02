@@ -131,7 +131,10 @@ p {
     text-transform: uppercase;
 }
 
-.form-container input, .form-container button {
+.form-container input, 
+.form-container button, 
+.form-container select,
+.form-container .select-background {
     border: 0;
     box-sizing: content-box;
     display: block;
@@ -142,6 +145,44 @@ p {
     text-shadow: -1px 0px #eee;
     width: 135px;
     height: 20px;
+}
+
+.form-container .input-group.select {
+    overflow: hidden;
+    position: relative;
+}
+
+.form-container .select select {
+    background-color: transparent;
+    position: absolute;
+        bottom: 0;
+        left: 0;
+    width: 165px;
+    z-index: 5;
+}
+
+.form-container .select.small select {
+    font-size: .9em;
+    padding-left: 5px;
+    width: 170px;
+}
+
+.form-container .select-background {
+    background-color: #fff;
+    position: relative;
+}
+
+.form-container .select button {
+    font-size: 1em;
+    margin: 0;
+    padding: 10px 0;
+    position: absolute;
+        bottom: 0;
+        right: 0;
+    text-align: center;
+    width: 40px;
+    height: 20px;
+    z-index: 1;
 }
 
 .form-container button {
@@ -390,7 +431,10 @@ footer p {
     .featured-content { padding: 0; }
     .featured-action { border-radius: 0; float: none; padding: 1px 0 0; width: 100%; }
     .form-container .input-group { width: 145px; }
-    .form-container input { width: 125px; }
+    .form-container input, 
+    .form-container select, 
+    .form-container .select-background { width: 125px; }
+    .form-container .select select { width: 155px; }
     .form-container button { width: 115px; }
 
     .featured-text { width: 100%; }
