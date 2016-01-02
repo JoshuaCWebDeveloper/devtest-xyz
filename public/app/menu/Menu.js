@@ -62,6 +62,18 @@ var Menu = class extends React.Component {
         handleClick () {
            this.setState({ class: (this.state.class == "") ? "show" : "" });
         }
+        
+        componentDidMount () {
+            this.runOutsideJS();
+        }
+        
+        componentDidUpdate () {
+            this.runOutsideJS();
+        }
+        
+        runOutsideJS () {
+            window.runAfterReact();    
+        }
     },
     //create directive to wrap React component in
     MenuDirective = function (reactDirective) {
