@@ -6,6 +6,3942 @@
  */
 (function(window, angular, undefined) {'use strict';
 
+/* jshint ignore:start */
+var noop        = angular.noop;
+var extend      = angular.extend;
+var jqLite      = angular.element;
+var forEach     = angular.forEach;
+var isArray     = angular.isArray;
+var isString    = angular.isString;
+var isObject    = angular.isObject;
+var isUndefined = angular.isUndefined;
+var isDefined   = angular.isDefined;
+var isFunction  = angular.isFunction;
+var isElement   = angular.isElement;
+
+var ELEMENT_NODE = 1;
+var COMMENT_NODE = 8;
+
+var ADD_CLASS_SUFFIX = '-add';
+var REMOVE_CLASS_SUFFIX = '-remove';
+var EVENT_CLASS_PREFIX = 'ng-';
+var ACTIVE_CLASS_SUFFIX = '-active';
+
+var NG_ANIMATE_CLASSNAME = 'ng-animate';
+var NG_ANIMATE_CHILDREN_DATA = '$$ngAnimateChildren';
+
+// Detect proper transitionend/animationend event names.
+var CSS_PREFIX = '', TRANSITION_PROP, TRANSITIONEND_EVENT, ANIMATION_PROP, ANIMATIONEND_EVENT;
+
+// If unprefixed events are not supported but webkit-prefixed are, use the latter.
+// Otherwise, just use W3C names, browsers not supporting them at all will just ignore them.
+// Note: Chrome implements `window.onwebkitanimationend` and doesn't implement `window.onanimationend`
+// but at the same time dispatches the `animationend` event and not `webkitAnimationEnd`.
+// Register both events in case `window.onanimationend` is not supported because of that,
+// do the same for `transitionend` as Safari is likely to exhibit similar behavior.
+// Also, the only modern browser that uses vendor prefixes for transitions/keyframes is webkit
+// therefore there is no reason to test anymore for other vendor prefixes:
+// http://caniuse.com/#search=transition
+if (isUndefined(window.ontransitionend) && isDefined(window.onwebkittransitionend)) {
+  CSS_PREFIX = '-webkit-';
+  TRANSITION_PROP = 'WebkitTransition';
+  TRANSITIONEND_EVENT = 'webkitTransitionEnd transitionend';
+} else {
+  TRANSITION_PROP = 'transition';
+  TRANSITIONEND_EVENT = 'transitionend';
+}
+
+if (isUndefined(window.onanimationend) && isDefined(window.onwebkitanimationend)) {
+  CSS_PREFIX = '-webkit-';
+  ANIMATION_PROP = 'WebkitAnimation';
+  ANIMATIONEND_EVENT = 'webkitAnimationEnd animationend';
+} else {
+  ANIMATION_PROP = 'animation';
+  ANIMATIONEND_EVENT = 'animationend';
+}
+
+var DURATION_KEY = 'Duration';
+var PROPERTY_KEY = 'Property';
+var DELAY_KEY = 'Delay';
+var TIMING_KEY = 'TimingFunction';
+var ANIMATION_ITERATION_COUNT_KEY = 'IterationCount';
+var ANIMATION_PLAYSTATE_KEY = 'PlayState';
+var SAFE_FAST_FORWARD_DURATION_VALUE = 9999;
+
+var ANIMATION_DELAY_PROP = ANIMATION_PROP + DELAY_KEY;
+var ANIMATION_DURATION_PROP = ANIMATION_PROP + DURATION_KEY;
+var TRANSITION_DELAY_PROP = TRANSITION_PROP + DELAY_KEY;
+var TRANSITION_DURATION_PROP = TRANSITION_PROP + DURATION_KEY;
+
+var isPromiseLike = function(p) {
+  return p && p.then ? true : false;
+};
+
+function assertArg(arg, name, reason) {
+  if (!arg) {
+    throw ngMinErr('areq', "Argument '{0}' is {1}", (name || '?'), (reason || "required"));
+  }
+  return arg;
+}
+
+function mergeClasses(a,b) {
+  if (!a && !b) return '';
+  if (!a) return b;
+  if (!b) return a;
+  if (isArray(a)) a = a.join(' ');
+  if (isArray(b)) b = b.join(' ');
+  return a + ' ' + b;
+}
+
+function packageStyles(options) {
+  var styles = {};
+  if (options && (options.to || options.from)) {
+    styles.to = options.to;
+    styles.from = options.from;
+  }
+  return styles;
+}
+
+function pendClasses(classes, fix, isPrefix) {
+  var className = '';
+  classes = isArray(classes)
+      ? classes
+      : classes && isString(classes) && classes.length
+          ? classes.split(/\s+/)
+          : [];
+  forEach(classes, function(klass, i) {
+    if (klass && klass.length > 0) {
+      className += (i > 0) ? ' ' : '';
+      className += isPrefix ? fix + klass
+                            : klass + fix;
+    }
+  });
+  return className;
+}
+
+function removeFromArray(arr, val) {
+  var index = arr.indexOf(val);
+  if (val >= 0) {
+    arr.splice(index, 1);
+  }
+}
+
+function stripCommentsFromElement(element) {
+  if (element instanceof jqLite) {
+    switch (element.length) {
+      case 0:
+        return [];
+        break;
+
+      case 1:
+        // there is no point of stripping anything if the element
+        // is the only element within the jqLite wrapper.
+        // (it's important that we retain the element instance.)
+        if (element[0].nodeType === ELEMENT_NODE) {
+          return element;
+        }
+        break;
+
+      default:
+        return jqLite(extractElementNode(element));
+        break;
+    }
+  }
+
+  if (element.nodeType === ELEMENT_NODE) {
+    return jqLite(element);
+  }
+}
+
+function extractElementNode(element) {
+  if (!element[0]) return element;
+  for (var i = 0; i < element.length; i++) {
+    var elm = element[i];
+    if (elm.nodeType == ELEMENT_NODE) {
+      return elm;
+    }
+  }
+}
+
+function $$addClass($$jqLite, element, className) {
+  forEach(element, function(elm) {
+    $$jqLite.addClass(elm, className);
+  });
+}
+
+function $$removeClass($$jqLite, element, className) {
+  forEach(element, function(elm) {
+    $$jqLite.removeClass(elm, className);
+  });
+}
+
+function applyAnimationClassesFactory($$jqLite) {
+  return function(element, options) {
+    if (options.addClass) {
+      $$addClass($$jqLite, element, options.addClass);
+      options.addClass = null;
+    }
+    if (options.removeClass) {
+      $$removeClass($$jqLite, element, options.removeClass);
+      options.removeClass = null;
+    }
+  }
+}
+
+function prepareAnimationOptions(options) {
+  options = options || {};
+  if (!options.$$prepared) {
+    var domOperation = options.domOperation || noop;
+    options.domOperation = function() {
+      options.$$domOperationFired = true;
+      domOperation();
+      domOperation = noop;
+    };
+    options.$$prepared = true;
+  }
+  return options;
+}
+
+function applyAnimationStyles(element, options) {
+  applyAnimationFromStyles(element, options);
+  applyAnimationToStyles(element, options);
+}
+
+function applyAnimationFromStyles(element, options) {
+  if (options.from) {
+    element.css(options.from);
+    options.from = null;
+  }
+}
+
+function applyAnimationToStyles(element, options) {
+  if (options.to) {
+    element.css(options.to);
+    options.to = null;
+  }
+}
+
+function mergeAnimationOptions(element, target, newOptions) {
+  var toAdd = (target.addClass || '') + ' ' + (newOptions.addClass || '');
+  var toRemove = (target.removeClass || '') + ' ' + (newOptions.removeClass || '');
+  var classes = resolveElementClasses(element.attr('class'), toAdd, toRemove);
+
+  if (newOptions.preparationClasses) {
+    target.preparationClasses = concatWithSpace(newOptions.preparationClasses, target.preparationClasses);
+    delete newOptions.preparationClasses;
+  }
+
+  // noop is basically when there is no callback; otherwise something has been set
+  var realDomOperation = target.domOperation !== noop ? target.domOperation : null;
+
+  extend(target, newOptions);
+
+  // TODO(matsko or sreeramu): proper fix is to maintain all animation callback in array and call at last,but now only leave has the callback so no issue with this.
+  if (realDomOperation) {
+    target.domOperation = realDomOperation;
+  }
+
+  if (classes.addClass) {
+    target.addClass = classes.addClass;
+  } else {
+    target.addClass = null;
+  }
+
+  if (classes.removeClass) {
+    target.removeClass = classes.removeClass;
+  } else {
+    target.removeClass = null;
+  }
+
+  return target;
+}
+
+function resolveElementClasses(existing, toAdd, toRemove) {
+  var ADD_CLASS = 1;
+  var REMOVE_CLASS = -1;
+
+  var flags = {};
+  existing = splitClassesToLookup(existing);
+
+  toAdd = splitClassesToLookup(toAdd);
+  forEach(toAdd, function(value, key) {
+    flags[key] = ADD_CLASS;
+  });
+
+  toRemove = splitClassesToLookup(toRemove);
+  forEach(toRemove, function(value, key) {
+    flags[key] = flags[key] === ADD_CLASS ? null : REMOVE_CLASS;
+  });
+
+  var classes = {
+    addClass: '',
+    removeClass: ''
+  };
+
+  forEach(flags, function(val, klass) {
+    var prop, allow;
+    if (val === ADD_CLASS) {
+      prop = 'addClass';
+      allow = !existing[klass];
+    } else if (val === REMOVE_CLASS) {
+      prop = 'removeClass';
+      allow = existing[klass];
+    }
+    if (allow) {
+      if (classes[prop].length) {
+        classes[prop] += ' ';
+      }
+      classes[prop] += klass;
+    }
+  });
+
+  function splitClassesToLookup(classes) {
+    if (isString(classes)) {
+      classes = classes.split(' ');
+    }
+
+    var obj = {};
+    forEach(classes, function(klass) {
+      // sometimes the split leaves empty string values
+      // incase extra spaces were applied to the options
+      if (klass.length) {
+        obj[klass] = true;
+      }
+    });
+    return obj;
+  }
+
+  return classes;
+}
+
+function getDomNode(element) {
+  return (element instanceof angular.element) ? element[0] : element;
+}
+
+function applyGeneratedPreparationClasses(element, event, options) {
+  var classes = '';
+  if (event) {
+    classes = pendClasses(event, EVENT_CLASS_PREFIX, true);
+  }
+  if (options.addClass) {
+    classes = concatWithSpace(classes, pendClasses(options.addClass, ADD_CLASS_SUFFIX));
+  }
+  if (options.removeClass) {
+    classes = concatWithSpace(classes, pendClasses(options.removeClass, REMOVE_CLASS_SUFFIX));
+  }
+  if (classes.length) {
+    options.preparationClasses = classes;
+    element.addClass(classes);
+  }
+}
+
+function clearGeneratedClasses(element, options) {
+  if (options.preparationClasses) {
+    element.removeClass(options.preparationClasses);
+    options.preparationClasses = null;
+  }
+  if (options.activeClasses) {
+    element.removeClass(options.activeClasses);
+    options.activeClasses = null;
+  }
+}
+
+function blockTransitions(node, duration) {
+  // we use a negative delay value since it performs blocking
+  // yet it doesn't kill any existing transitions running on the
+  // same element which makes this safe for class-based animations
+  var value = duration ? '-' + duration + 's' : '';
+  applyInlineStyle(node, [TRANSITION_DELAY_PROP, value]);
+  return [TRANSITION_DELAY_PROP, value];
+}
+
+function blockKeyframeAnimations(node, applyBlock) {
+  var value = applyBlock ? 'paused' : '';
+  var key = ANIMATION_PROP + ANIMATION_PLAYSTATE_KEY;
+  applyInlineStyle(node, [key, value]);
+  return [key, value];
+}
+
+function applyInlineStyle(node, styleTuple) {
+  var prop = styleTuple[0];
+  var value = styleTuple[1];
+  node.style[prop] = value;
+}
+
+function concatWithSpace(a,b) {
+  if (!a) return b;
+  if (!b) return a;
+  return a + ' ' + b;
+}
+
+var $$rAFSchedulerFactory = ['$$rAF', function($$rAF) {
+  var queue, cancelFn;
+
+  function scheduler(tasks) {
+    // we make a copy since RAFScheduler mutates the state
+    // of the passed in array variable and this would be difficult
+    // to track down on the outside code
+    queue = queue.concat(tasks);
+    nextTick();
+  }
+
+  queue = scheduler.queue = [];
+
+  /* waitUntilQuiet does two things:
+   * 1. It will run the FINAL `fn` value only when an uncancelled RAF has passed through
+   * 2. It will delay the next wave of tasks from running until the quiet `fn` has run.
+   *
+   * The motivation here is that animation code can request more time from the scheduler
+   * before the next wave runs. This allows for certain DOM properties such as classes to
+   * be resolved in time for the next animation to run.
+   */
+  scheduler.waitUntilQuiet = function(fn) {
+    if (cancelFn) cancelFn();
+
+    cancelFn = $$rAF(function() {
+      cancelFn = null;
+      fn();
+      nextTick();
+    });
+  };
+
+  return scheduler;
+
+  function nextTick() {
+    if (!queue.length) return;
+
+    var items = queue.shift();
+    for (var i = 0; i < items.length; i++) {
+      items[i]();
+    }
+
+    if (!cancelFn) {
+      $$rAF(function() {
+        if (!cancelFn) nextTick();
+      });
+    }
+  }
+}];
+
+var $$AnimateChildrenDirective = [function() {
+  return function(scope, element, attrs) {
+    var val = attrs.ngAnimateChildren;
+    if (angular.isString(val) && val.length === 0) { //empty attribute
+      element.data(NG_ANIMATE_CHILDREN_DATA, true);
+    } else {
+      attrs.$observe('ngAnimateChildren', function(value) {
+        value = value === 'on' || value === 'true';
+        element.data(NG_ANIMATE_CHILDREN_DATA, value);
+      });
+    }
+  };
+}];
+
+var ANIMATE_TIMER_KEY = '$$animateCss';
+
+/**
+ * @ngdoc service
+ * @name $animateCss
+ * @kind object
+ *
+ * @description
+ * The `$animateCss` service is a useful utility to trigger customized CSS-based transitions/keyframes
+ * from a JavaScript-based animation or directly from a directive. The purpose of `$animateCss` is NOT
+ * to side-step how `$animate` and ngAnimate work, but the goal is to allow pre-existing animations or
+ * directives to create more complex animations that can be purely driven using CSS code.
+ *
+ * Note that only browsers that support CSS transitions and/or keyframe animations are capable of
+ * rendering animations triggered via `$animateCss` (bad news for IE9 and lower).
+ *
+ * ## Usage
+ * Once again, `$animateCss` is designed to be used inside of a registered JavaScript animation that
+ * is powered by ngAnimate. It is possible to use `$animateCss` directly inside of a directive, however,
+ * any automatic control over cancelling animations and/or preventing animations from being run on
+ * child elements will not be handled by Angular. For this to work as expected, please use `$animate` to
+ * trigger the animation and then setup a JavaScript animation that injects `$animateCss` to trigger
+ * the CSS animation.
+ *
+ * The example below shows how we can create a folding animation on an element using `ng-if`:
+ *
+ * ```html
+ * <!-- notice the `fold-animation` CSS class -->
+ * <div ng-if="onOff" class="fold-animation">
+ *   This element will go BOOM
+ * </div>
+ * <button ng-click="onOff=true">Fold In</button>
+ * ```
+ *
+ * Now we create the **JavaScript animation** that will trigger the CSS transition:
+ *
+ * ```js
+ * ngModule.animation('.fold-animation', ['$animateCss', function($animateCss) {
+ *   return {
+ *     enter: function(element, doneFn) {
+ *       var height = element[0].offsetHeight;
+ *       return $animateCss(element, {
+ *         from: { height:'0px' },
+ *         to: { height:height + 'px' },
+ *         duration: 1 // one second
+ *       });
+ *     }
+ *   }
+ * }]);
+ * ```
+ *
+ * ## More Advanced Uses
+ *
+ * `$animateCss` is the underlying code that ngAnimate uses to power **CSS-based animations** behind the scenes. Therefore CSS hooks
+ * like `.ng-EVENT`, `.ng-EVENT-active`, `.ng-EVENT-stagger` are all features that can be triggered using `$animateCss` via JavaScript code.
+ *
+ * This also means that just about any combination of adding classes, removing classes, setting styles, dynamically setting a keyframe animation,
+ * applying a hardcoded duration or delay value, changing the animation easing or applying a stagger animation are all options that work with
+ * `$animateCss`. The service itself is smart enough to figure out the combination of options and examine the element styling properties in order
+ * to provide a working animation that will run in CSS.
+ *
+ * The example below showcases a more advanced version of the `.fold-animation` from the example above:
+ *
+ * ```js
+ * ngModule.animation('.fold-animation', ['$animateCss', function($animateCss) {
+ *   return {
+ *     enter: function(element, doneFn) {
+ *       var height = element[0].offsetHeight;
+ *       return $animateCss(element, {
+ *         addClass: 'red large-text pulse-twice',
+ *         easing: 'ease-out',
+ *         from: { height:'0px' },
+ *         to: { height:height + 'px' },
+ *         duration: 1 // one second
+ *       });
+ *     }
+ *   }
+ * }]);
+ * ```
+ *
+ * Since we're adding/removing CSS classes then the CSS transition will also pick those up:
+ *
+ * ```css
+ * /&#42; since a hardcoded duration value of 1 was provided in the JavaScript animation code,
+ * the CSS classes below will be transitioned despite them being defined as regular CSS classes &#42;/
+ * .red { background:red; }
+ * .large-text { font-size:20px; }
+ *
+ * /&#42; we can also use a keyframe animation and $animateCss will make it work alongside the transition &#42;/
+ * .pulse-twice {
+ *   animation: 0.5s pulse linear 2;
+ *   -webkit-animation: 0.5s pulse linear 2;
+ * }
+ *
+ * @keyframes pulse {
+ *   from { transform: scale(0.5); }
+ *   to { transform: scale(1.5); }
+ * }
+ *
+ * @-webkit-keyframes pulse {
+ *   from { -webkit-transform: scale(0.5); }
+ *   to { -webkit-transform: scale(1.5); }
+ * }
+ * ```
+ *
+ * Given this complex combination of CSS classes, styles and options, `$animateCss` will figure everything out and make the animation happen.
+ *
+ * ## How the Options are handled
+ *
+ * `$animateCss` is very versatile and intelligent when it comes to figuring out what configurations to apply to the element to ensure the animation
+ * works with the options provided. Say for example we were adding a class that contained a keyframe value and we wanted to also animate some inline
+ * styles using the `from` and `to` properties.
+ *
+ * ```js
+ * var animator = $animateCss(element, {
+ *   from: { background:'red' },
+ *   to: { background:'blue' }
+ * });
+ * animator.start();
+ * ```
+ *
+ * ```css
+ * .rotating-animation {
+ *   animation:0.5s rotate linear;
+ *   -webkit-animation:0.5s rotate linear;
+ * }
+ *
+ * @keyframes rotate {
+ *   from { transform: rotate(0deg); }
+ *   to { transform: rotate(360deg); }
+ * }
+ *
+ * @-webkit-keyframes rotate {
+ *   from { -webkit-transform: rotate(0deg); }
+ *   to { -webkit-transform: rotate(360deg); }
+ * }
+ * ```
+ *
+ * The missing pieces here are that we do not have a transition set (within the CSS code nor within the `$animateCss` options) and the duration of the animation is
+ * going to be detected from what the keyframe styles on the CSS class are. In this event, `$animateCss` will automatically create an inline transition
+ * style matching the duration detected from the keyframe style (which is present in the CSS class that is being added) and then prepare both the transition
+ * and keyframe animations to run in parallel on the element. Then when the animation is underway the provided `from` and `to` CSS styles will be applied
+ * and spread across the transition and keyframe animation.
+ *
+ * ## What is returned
+ *
+ * `$animateCss` works in two stages: a preparation phase and an animation phase. Therefore when `$animateCss` is first called it will NOT actually
+ * start the animation. All that is going on here is that the element is being prepared for the animation (which means that the generated CSS classes are
+ * added and removed on the element). Once `$animateCss` is called it will return an object with the following properties:
+ *
+ * ```js
+ * var animator = $animateCss(element, { ... });
+ * ```
+ *
+ * Now what do the contents of our `animator` variable look like:
+ *
+ * ```js
+ * {
+ *   // starts the animation
+ *   start: Function,
+ *
+ *   // ends (aborts) the animation
+ *   end: Function
+ * }
+ * ```
+ *
+ * To actually start the animation we need to run `animation.start()` which will then return a promise that we can hook into to detect when the animation ends.
+ * If we choose not to run the animation then we MUST run `animation.end()` to perform a cleanup on the element (since some CSS classes and stlyes may have been
+ * applied to the element during the preparation phase). Note that all other properties such as duration, delay, transitions and keyframes are just properties
+ * and that changing them will not reconfigure the parameters of the animation.
+ *
+ * ### runner.done() vs runner.then()
+ * It is documented that `animation.start()` will return a promise object and this is true, however, there is also an additional method available on the
+ * runner called `.done(callbackFn)`. The done method works the same as `.finally(callbackFn)`, however, it does **not trigger a digest to occur**.
+ * Therefore, for performance reasons, it's always best to use `runner.done(callback)` instead of `runner.then()`, `runner.catch()` or `runner.finally()`
+ * unless you really need a digest to kick off afterwards.
+ *
+ * Keep in mind that, to make this easier, ngAnimate has tweaked the JS animations API to recognize when a runner instance is returned from $animateCss
+ * (so there is no need to call `runner.done(doneFn)` inside of your JavaScript animation code).
+ * Check the {@link ngAnimate.$animateCss#usage animation code above} to see how this works.
+ *
+ * @param {DOMElement} element the element that will be animated
+ * @param {object} options the animation-related options that will be applied during the animation
+ *
+ * * `event` - The DOM event (e.g. enter, leave, move). When used, a generated CSS class of `ng-EVENT` and `ng-EVENT-active` will be applied
+ * to the element during the animation. Multiple events can be provided when spaces are used as a separator. (Note that this will not perform any DOM operation.)
+ * * `structural` - Indicates that the `ng-` prefix will be added to the event class. Setting to `false` or omitting will turn `ng-EVENT` and
+ * `ng-EVENT-active` in `EVENT` and `EVENT-active`. Unused if `event` is omitted.
+ * * `easing` - The CSS easing value that will be applied to the transition or keyframe animation (or both).
+ * * `transitionStyle` - The raw CSS transition style that will be used (e.g. `1s linear all`).
+ * * `keyframeStyle` - The raw CSS keyframe animation style that will be used (e.g. `1s my_animation linear`).
+ * * `from` - The starting CSS styles (a key/value object) that will be applied at the start of the animation.
+ * * `to` - The ending CSS styles (a key/value object) that will be applied across the animation via a CSS transition.
+ * * `addClass` - A space separated list of CSS classes that will be added to the element and spread across the animation.
+ * * `removeClass` - A space separated list of CSS classes that will be removed from the element and spread across the animation.
+ * * `duration` - A number value representing the total duration of the transition and/or keyframe (note that a value of 1 is 1000ms). If a value of `0`
+ * is provided then the animation will be skipped entirely.
+ * * `delay` - A number value representing the total delay of the transition and/or keyframe (note that a value of 1 is 1000ms). If a value of `true` is
+ * used then whatever delay value is detected from the CSS classes will be mirrored on the elements styles (e.g. by setting delay true then the style value
+ * of the element will be `transition-delay: DETECTED_VALUE`). Using `true` is useful when you want the CSS classes and inline styles to all share the same
+ * CSS delay value.
+ * * `stagger` - A numeric time value representing the delay between successively animated elements
+ * ({@link ngAnimate#css-staggering-animations Click here to learn how CSS-based staggering works in ngAnimate.})
+ * * `staggerIndex` - The numeric index representing the stagger item (e.g. a value of 5 is equal to the sixth item in the stagger; therefore when a
+ * * `stagger` option value of `0.1` is used then there will be a stagger delay of `600ms`)
+ * * `applyClassesEarly` - Whether or not the classes being added or removed will be used when detecting the animation. This is set by `$animate` when enter/leave/move animations are fired to ensure that the CSS classes are resolved in time. (Note that this will prevent any transitions from occuring on the classes being added and removed.)
+ * * `cleanupStyles` - Whether or not the provided `from` and `to` styles will be removed once
+ *    the animation is closed. This is useful for when the styles are used purely for the sake of
+ *    the animation and do not have a lasting visual effect on the element (e.g. a colapse and open animation).
+ *    By default this value is set to `false`.
+ *
+ * @return {object} an object with start and end methods and details about the animation.
+ *
+ * * `start` - The method to start the animation. This will return a `Promise` when called.
+ * * `end` - This method will cancel the animation and remove all applied CSS classes and styles.
+ */
+var ONE_SECOND = 1000;
+var BASE_TEN = 10;
+
+var ELAPSED_TIME_MAX_DECIMAL_PLACES = 3;
+var CLOSING_TIME_BUFFER = 1.5;
+
+var DETECT_CSS_PROPERTIES = {
+  transitionDuration:      TRANSITION_DURATION_PROP,
+  transitionDelay:         TRANSITION_DELAY_PROP,
+  transitionProperty:      TRANSITION_PROP + PROPERTY_KEY,
+  animationDuration:       ANIMATION_DURATION_PROP,
+  animationDelay:          ANIMATION_DELAY_PROP,
+  animationIterationCount: ANIMATION_PROP + ANIMATION_ITERATION_COUNT_KEY
+};
+
+var DETECT_STAGGER_CSS_PROPERTIES = {
+  transitionDuration:      TRANSITION_DURATION_PROP,
+  transitionDelay:         TRANSITION_DELAY_PROP,
+  animationDuration:       ANIMATION_DURATION_PROP,
+  animationDelay:          ANIMATION_DELAY_PROP
+};
+
+function getCssKeyframeDurationStyle(duration) {
+  return [ANIMATION_DURATION_PROP, duration + 's'];
+}
+
+function getCssDelayStyle(delay, isKeyframeAnimation) {
+  var prop = isKeyframeAnimation ? ANIMATION_DELAY_PROP : TRANSITION_DELAY_PROP;
+  return [prop, delay + 's'];
+}
+
+function computeCssStyles($window, element, properties) {
+  var styles = Object.create(null);
+  var detectedStyles = $window.getComputedStyle(element) || {};
+  forEach(properties, function(formalStyleName, actualStyleName) {
+    var val = detectedStyles[formalStyleName];
+    if (val) {
+      var c = val.charAt(0);
+
+      // only numerical-based values have a negative sign or digit as the first value
+      if (c === '-' || c === '+' || c >= 0) {
+        val = parseMaxTime(val);
+      }
+
+      // by setting this to null in the event that the delay is not set or is set directly as 0
+      // then we can still allow for zegative values to be used later on and not mistake this
+      // value for being greater than any other negative value.
+      if (val === 0) {
+        val = null;
+      }
+      styles[actualStyleName] = val;
+    }
+  });
+
+  return styles;
+}
+
+function parseMaxTime(str) {
+  var maxValue = 0;
+  var values = str.split(/\s*,\s*/);
+  forEach(values, function(value) {
+    // it's always safe to consider only second values and omit `ms` values since
+    // getComputedStyle will always handle the conversion for us
+    if (value.charAt(value.length - 1) == 's') {
+      value = value.substring(0, value.length - 1);
+    }
+    value = parseFloat(value) || 0;
+    maxValue = maxValue ? Math.max(value, maxValue) : value;
+  });
+  return maxValue;
+}
+
+function truthyTimingValue(val) {
+  return val === 0 || val != null;
+}
+
+function getCssTransitionDurationStyle(duration, applyOnlyDuration) {
+  var style = TRANSITION_PROP;
+  var value = duration + 's';
+  if (applyOnlyDuration) {
+    style += DURATION_KEY;
+  } else {
+    value += ' linear all';
+  }
+  return [style, value];
+}
+
+function createLocalCacheLookup() {
+  var cache = Object.create(null);
+  return {
+    flush: function() {
+      cache = Object.create(null);
+    },
+
+    count: function(key) {
+      var entry = cache[key];
+      return entry ? entry.total : 0;
+    },
+
+    get: function(key) {
+      var entry = cache[key];
+      return entry && entry.value;
+    },
+
+    put: function(key, value) {
+      if (!cache[key]) {
+        cache[key] = { total: 1, value: value };
+      } else {
+        cache[key].total++;
+      }
+    }
+  };
+}
+
+// we do not reassign an already present style value since
+// if we detect the style property value again we may be
+// detecting styles that were added via the `from` styles.
+// We make use of `isDefined` here since an empty string
+// or null value (which is what getPropertyValue will return
+// for a non-existing style) will still be marked as a valid
+// value for the style (a falsy value implies that the style
+// is to be removed at the end of the animation). If we had a simple
+// "OR" statement then it would not be enough to catch that.
+function registerRestorableStyles(backup, node, properties) {
+  forEach(properties, function(prop) {
+    backup[prop] = isDefined(backup[prop])
+        ? backup[prop]
+        : node.style.getPropertyValue(prop);
+  });
+}
+
+var $AnimateCssProvider = ['$animateProvider', function($animateProvider) {
+  var gcsLookup = createLocalCacheLookup();
+  var gcsStaggerLookup = createLocalCacheLookup();
+
+  this.$get = ['$window', '$$jqLite', '$$AnimateRunner', '$timeout',
+               '$$forceReflow', '$sniffer', '$$rAFScheduler', '$animate',
+       function($window,   $$jqLite,   $$AnimateRunner,   $timeout,
+                $$forceReflow,   $sniffer,   $$rAFScheduler, $animate) {
+
+    var applyAnimationClasses = applyAnimationClassesFactory($$jqLite);
+
+    var parentCounter = 0;
+    function gcsHashFn(node, extraClasses) {
+      var KEY = "$$ngAnimateParentKey";
+      var parentNode = node.parentNode;
+      var parentID = parentNode[KEY] || (parentNode[KEY] = ++parentCounter);
+      return parentID + '-' + node.getAttribute('class') + '-' + extraClasses;
+    }
+
+    function computeCachedCssStyles(node, className, cacheKey, properties) {
+      var timings = gcsLookup.get(cacheKey);
+
+      if (!timings) {
+        timings = computeCssStyles($window, node, properties);
+        if (timings.animationIterationCount === 'infinite') {
+          timings.animationIterationCount = 1;
+        }
+      }
+
+      // we keep putting this in multiple times even though the value and the cacheKey are the same
+      // because we're keeping an interal tally of how many duplicate animations are detected.
+      gcsLookup.put(cacheKey, timings);
+      return timings;
+    }
+
+    function computeCachedCssStaggerStyles(node, className, cacheKey, properties) {
+      var stagger;
+
+      // if we have one or more existing matches of matching elements
+      // containing the same parent + CSS styles (which is how cacheKey works)
+      // then staggering is possible
+      if (gcsLookup.count(cacheKey) > 0) {
+        stagger = gcsStaggerLookup.get(cacheKey);
+
+        if (!stagger) {
+          var staggerClassName = pendClasses(className, '-stagger');
+
+          $$jqLite.addClass(node, staggerClassName);
+
+          stagger = computeCssStyles($window, node, properties);
+
+          // force the conversion of a null value to zero incase not set
+          stagger.animationDuration = Math.max(stagger.animationDuration, 0);
+          stagger.transitionDuration = Math.max(stagger.transitionDuration, 0);
+
+          $$jqLite.removeClass(node, staggerClassName);
+
+          gcsStaggerLookup.put(cacheKey, stagger);
+        }
+      }
+
+      return stagger || {};
+    }
+
+    var cancelLastRAFRequest;
+    var rafWaitQueue = [];
+    function waitUntilQuiet(callback) {
+      rafWaitQueue.push(callback);
+      $$rAFScheduler.waitUntilQuiet(function() {
+        gcsLookup.flush();
+        gcsStaggerLookup.flush();
+
+        // DO NOT REMOVE THIS LINE OR REFACTOR OUT THE `pageWidth` variable.
+        // PLEASE EXAMINE THE `$$forceReflow` service to understand why.
+        var pageWidth = $$forceReflow();
+
+        // we use a for loop to ensure that if the queue is changed
+        // during this looping then it will consider new requests
+        for (var i = 0; i < rafWaitQueue.length; i++) {
+          rafWaitQueue[i](pageWidth);
+        }
+        rafWaitQueue.length = 0;
+      });
+    }
+
+    function computeTimings(node, className, cacheKey) {
+      var timings = computeCachedCssStyles(node, className, cacheKey, DETECT_CSS_PROPERTIES);
+      var aD = timings.animationDelay;
+      var tD = timings.transitionDelay;
+      timings.maxDelay = aD && tD
+          ? Math.max(aD, tD)
+          : (aD || tD);
+      timings.maxDuration = Math.max(
+          timings.animationDuration * timings.animationIterationCount,
+          timings.transitionDuration);
+
+      return timings;
+    }
+
+    return function init(element, options) {
+      var restoreStyles = {};
+      var node = getDomNode(element);
+      if (!node
+          || !node.parentNode
+          || !$animate.enabled()) {
+        return closeAndReturnNoopAnimator();
+      }
+
+      options = prepareAnimationOptions(options);
+
+      var temporaryStyles = [];
+      var classes = element.attr('class');
+      var styles = packageStyles(options);
+      var animationClosed;
+      var animationPaused;
+      var animationCompleted;
+      var runner;
+      var runnerHost;
+      var maxDelay;
+      var maxDelayTime;
+      var maxDuration;
+      var maxDurationTime;
+
+      if (options.duration === 0 || (!$sniffer.animations && !$sniffer.transitions)) {
+        return closeAndReturnNoopAnimator();
+      }
+
+      var method = options.event && isArray(options.event)
+            ? options.event.join(' ')
+            : options.event;
+
+      var isStructural = method && options.structural;
+      var structuralClassName = '';
+      var addRemoveClassName = '';
+
+      if (isStructural) {
+        structuralClassName = pendClasses(method, EVENT_CLASS_PREFIX, true);
+      } else if (method) {
+        structuralClassName = method;
+      }
+
+      if (options.addClass) {
+        addRemoveClassName += pendClasses(options.addClass, ADD_CLASS_SUFFIX);
+      }
+
+      if (options.removeClass) {
+        if (addRemoveClassName.length) {
+          addRemoveClassName += ' ';
+        }
+        addRemoveClassName += pendClasses(options.removeClass, REMOVE_CLASS_SUFFIX);
+      }
+
+      // there may be a situation where a structural animation is combined together
+      // with CSS classes that need to resolve before the animation is computed.
+      // However this means that there is no explicit CSS code to block the animation
+      // from happening (by setting 0s none in the class name). If this is the case
+      // we need to apply the classes before the first rAF so we know to continue if
+      // there actually is a detected transition or keyframe animation
+      if (options.applyClassesEarly && addRemoveClassName.length) {
+        applyAnimationClasses(element, options);
+      }
+
+      var preparationClasses = [structuralClassName, addRemoveClassName].join(' ').trim();
+      var fullClassName = classes + ' ' + preparationClasses;
+      var activeClasses = pendClasses(preparationClasses, ACTIVE_CLASS_SUFFIX);
+      var hasToStyles = styles.to && Object.keys(styles.to).length > 0;
+      var containsKeyframeAnimation = (options.keyframeStyle || '').length > 0;
+
+      // there is no way we can trigger an animation if no styles and
+      // no classes are being applied which would then trigger a transition,
+      // unless there a is raw keyframe value that is applied to the element.
+      if (!containsKeyframeAnimation
+           && !hasToStyles
+           && !preparationClasses) {
+        return closeAndReturnNoopAnimator();
+      }
+
+      var cacheKey, stagger;
+      if (options.stagger > 0) {
+        var staggerVal = parseFloat(options.stagger);
+        stagger = {
+          transitionDelay: staggerVal,
+          animationDelay: staggerVal,
+          transitionDuration: 0,
+          animationDuration: 0
+        };
+      } else {
+        cacheKey = gcsHashFn(node, fullClassName);
+        stagger = computeCachedCssStaggerStyles(node, preparationClasses, cacheKey, DETECT_STAGGER_CSS_PROPERTIES);
+      }
+
+      if (!options.$$skipPreparationClasses) {
+        $$jqLite.addClass(element, preparationClasses);
+      }
+
+      var applyOnlyDuration;
+
+      if (options.transitionStyle) {
+        var transitionStyle = [TRANSITION_PROP, options.transitionStyle];
+        applyInlineStyle(node, transitionStyle);
+        temporaryStyles.push(transitionStyle);
+      }
+
+      if (options.duration >= 0) {
+        applyOnlyDuration = node.style[TRANSITION_PROP].length > 0;
+        var durationStyle = getCssTransitionDurationStyle(options.duration, applyOnlyDuration);
+
+        // we set the duration so that it will be picked up by getComputedStyle later
+        applyInlineStyle(node, durationStyle);
+        temporaryStyles.push(durationStyle);
+      }
+
+      if (options.keyframeStyle) {
+        var keyframeStyle = [ANIMATION_PROP, options.keyframeStyle];
+        applyInlineStyle(node, keyframeStyle);
+        temporaryStyles.push(keyframeStyle);
+      }
+
+      var itemIndex = stagger
+          ? options.staggerIndex >= 0
+              ? options.staggerIndex
+              : gcsLookup.count(cacheKey)
+          : 0;
+
+      var isFirst = itemIndex === 0;
+
+      // this is a pre-emptive way of forcing the setup classes to be added and applied INSTANTLY
+      // without causing any combination of transitions to kick in. By adding a negative delay value
+      // it forces the setup class' transition to end immediately. We later then remove the negative
+      // transition delay to allow for the transition to naturally do it's thing. The beauty here is
+      // that if there is no transition defined then nothing will happen and this will also allow
+      // other transitions to be stacked on top of each other without any chopping them out.
+      if (isFirst && !options.skipBlocking) {
+        blockTransitions(node, SAFE_FAST_FORWARD_DURATION_VALUE);
+      }
+
+      var timings = computeTimings(node, fullClassName, cacheKey);
+      var relativeDelay = timings.maxDelay;
+      maxDelay = Math.max(relativeDelay, 0);
+      maxDuration = timings.maxDuration;
+
+      var flags = {};
+      flags.hasTransitions          = timings.transitionDuration > 0;
+      flags.hasAnimations           = timings.animationDuration > 0;
+      flags.hasTransitionAll        = flags.hasTransitions && timings.transitionProperty == 'all';
+      flags.applyTransitionDuration = hasToStyles && (
+                                        (flags.hasTransitions && !flags.hasTransitionAll)
+                                         || (flags.hasAnimations && !flags.hasTransitions));
+      flags.applyAnimationDuration  = options.duration && flags.hasAnimations;
+      flags.applyTransitionDelay    = truthyTimingValue(options.delay) && (flags.applyTransitionDuration || flags.hasTransitions);
+      flags.applyAnimationDelay     = truthyTimingValue(options.delay) && flags.hasAnimations;
+      flags.recalculateTimingStyles = addRemoveClassName.length > 0;
+
+      if (flags.applyTransitionDuration || flags.applyAnimationDuration) {
+        maxDuration = options.duration ? parseFloat(options.duration) : maxDuration;
+
+        if (flags.applyTransitionDuration) {
+          flags.hasTransitions = true;
+          timings.transitionDuration = maxDuration;
+          applyOnlyDuration = node.style[TRANSITION_PROP + PROPERTY_KEY].length > 0;
+          temporaryStyles.push(getCssTransitionDurationStyle(maxDuration, applyOnlyDuration));
+        }
+
+        if (flags.applyAnimationDuration) {
+          flags.hasAnimations = true;
+          timings.animationDuration = maxDuration;
+          temporaryStyles.push(getCssKeyframeDurationStyle(maxDuration));
+        }
+      }
+
+      if (maxDuration === 0 && !flags.recalculateTimingStyles) {
+        return closeAndReturnNoopAnimator();
+      }
+
+      if (options.delay != null) {
+        var delayStyle = parseFloat(options.delay);
+
+        if (flags.applyTransitionDelay) {
+          temporaryStyles.push(getCssDelayStyle(delayStyle));
+        }
+
+        if (flags.applyAnimationDelay) {
+          temporaryStyles.push(getCssDelayStyle(delayStyle, true));
+        }
+      }
+
+      // we need to recalculate the delay value since we used a pre-emptive negative
+      // delay value and the delay value is required for the final event checking. This
+      // property will ensure that this will happen after the RAF phase has passed.
+      if (options.duration == null && timings.transitionDuration > 0) {
+        flags.recalculateTimingStyles = flags.recalculateTimingStyles || isFirst;
+      }
+
+      maxDelayTime = maxDelay * ONE_SECOND;
+      maxDurationTime = maxDuration * ONE_SECOND;
+      if (!options.skipBlocking) {
+        flags.blockTransition = timings.transitionDuration > 0;
+        flags.blockKeyframeAnimation = timings.animationDuration > 0 &&
+                                       stagger.animationDelay > 0 &&
+                                       stagger.animationDuration === 0;
+      }
+
+      if (options.from) {
+        if (options.cleanupStyles) {
+          registerRestorableStyles(restoreStyles, node, Object.keys(options.from));
+        }
+        applyAnimationFromStyles(element, options);
+      }
+
+      if (flags.blockTransition || flags.blockKeyframeAnimation) {
+        applyBlocking(maxDuration);
+      } else if (!options.skipBlocking) {
+        blockTransitions(node, false);
+      }
+
+      // TODO(matsko): for 1.5 change this code to have an animator object for better debugging
+      return {
+        $$willAnimate: true,
+        end: endFn,
+        start: function() {
+          if (animationClosed) return;
+
+          runnerHost = {
+            end: endFn,
+            cancel: cancelFn,
+            resume: null, //this will be set during the start() phase
+            pause: null
+          };
+
+          runner = new $$AnimateRunner(runnerHost);
+
+          waitUntilQuiet(start);
+
+          // we don't have access to pause/resume the animation
+          // since it hasn't run yet. AnimateRunner will therefore
+          // set noop functions for resume and pause and they will
+          // later be overridden once the animation is triggered
+          return runner;
+        }
+      };
+
+      function endFn() {
+        close();
+      }
+
+      function cancelFn() {
+        close(true);
+      }
+
+      function close(rejected) { // jshint ignore:line
+        // if the promise has been called already then we shouldn't close
+        // the animation again
+        if (animationClosed || (animationCompleted && animationPaused)) return;
+        animationClosed = true;
+        animationPaused = false;
+
+        if (!options.$$skipPreparationClasses) {
+          $$jqLite.removeClass(element, preparationClasses);
+        }
+        $$jqLite.removeClass(element, activeClasses);
+
+        blockKeyframeAnimations(node, false);
+        blockTransitions(node, false);
+
+        forEach(temporaryStyles, function(entry) {
+          // There is only one way to remove inline style properties entirely from elements.
+          // By using `removeProperty` this works, but we need to convert camel-cased CSS
+          // styles down to hyphenated values.
+          node.style[entry[0]] = '';
+        });
+
+        applyAnimationClasses(element, options);
+        applyAnimationStyles(element, options);
+
+        if (Object.keys(restoreStyles).length) {
+          forEach(restoreStyles, function(value, prop) {
+            value ? node.style.setProperty(prop, value)
+                  : node.style.removeProperty(prop);
+          });
+        }
+
+        // the reason why we have this option is to allow a synchronous closing callback
+        // that is fired as SOON as the animation ends (when the CSS is removed) or if
+        // the animation never takes off at all. A good example is a leave animation since
+        // the element must be removed just after the animation is over or else the element
+        // will appear on screen for one animation frame causing an overbearing flicker.
+        if (options.onDone) {
+          options.onDone();
+        }
+
+        // if the preparation function fails then the promise is not setup
+        if (runner) {
+          runner.complete(!rejected);
+        }
+      }
+
+      function applyBlocking(duration) {
+        if (flags.blockTransition) {
+          blockTransitions(node, duration);
+        }
+
+        if (flags.blockKeyframeAnimation) {
+          blockKeyframeAnimations(node, !!duration);
+        }
+      }
+
+      function closeAndReturnNoopAnimator() {
+        runner = new $$AnimateRunner({
+          end: endFn,
+          cancel: cancelFn
+        });
+
+        // should flush the cache animation
+        waitUntilQuiet(noop);
+        close();
+
+        return {
+          $$willAnimate: false,
+          start: function() {
+            return runner;
+          },
+          end: endFn
+        };
+      }
+
+      function start() {
+        if (animationClosed) return;
+        if (!node.parentNode) {
+          close();
+          return;
+        }
+
+        var startTime, events = [];
+
+        // even though we only pause keyframe animations here the pause flag
+        // will still happen when transitions are used. Only the transition will
+        // not be paused since that is not possible. If the animation ends when
+        // paused then it will not complete until unpaused or cancelled.
+        var playPause = function(playAnimation) {
+          if (!animationCompleted) {
+            animationPaused = !playAnimation;
+            if (timings.animationDuration) {
+              var value = blockKeyframeAnimations(node, animationPaused);
+              animationPaused
+                  ? temporaryStyles.push(value)
+                  : removeFromArray(temporaryStyles, value);
+            }
+          } else if (animationPaused && playAnimation) {
+            animationPaused = false;
+            close();
+          }
+        };
+
+        // checking the stagger duration prevents an accidently cascade of the CSS delay style
+        // being inherited from the parent. If the transition duration is zero then we can safely
+        // rely that the delay value is an intential stagger delay style.
+        var maxStagger = itemIndex > 0
+                         && ((timings.transitionDuration && stagger.transitionDuration === 0) ||
+                            (timings.animationDuration && stagger.animationDuration === 0))
+                         && Math.max(stagger.animationDelay, stagger.transitionDelay);
+        if (maxStagger) {
+          $timeout(triggerAnimationStart,
+                   Math.floor(maxStagger * itemIndex * ONE_SECOND),
+                   false);
+        } else {
+          triggerAnimationStart();
+        }
+
+        // this will decorate the existing promise runner with pause/resume methods
+        runnerHost.resume = function() {
+          playPause(true);
+        };
+
+        runnerHost.pause = function() {
+          playPause(false);
+        };
+
+        function triggerAnimationStart() {
+          // just incase a stagger animation kicks in when the animation
+          // itself was cancelled entirely
+          if (animationClosed) return;
+
+          applyBlocking(false);
+
+          forEach(temporaryStyles, function(entry) {
+            var key = entry[0];
+            var value = entry[1];
+            node.style[key] = value;
+          });
+
+          applyAnimationClasses(element, options);
+          $$jqLite.addClass(element, activeClasses);
+
+          if (flags.recalculateTimingStyles) {
+            fullClassName = node.className + ' ' + preparationClasses;
+            cacheKey = gcsHashFn(node, fullClassName);
+
+            timings = computeTimings(node, fullClassName, cacheKey);
+            relativeDelay = timings.maxDelay;
+            maxDelay = Math.max(relativeDelay, 0);
+            maxDuration = timings.maxDuration;
+
+            if (maxDuration === 0) {
+              close();
+              return;
+            }
+
+            flags.hasTransitions = timings.transitionDuration > 0;
+            flags.hasAnimations = timings.animationDuration > 0;
+          }
+
+          if (flags.applyAnimationDelay) {
+            relativeDelay = typeof options.delay !== "boolean" && truthyTimingValue(options.delay)
+                  ? parseFloat(options.delay)
+                  : relativeDelay;
+
+            maxDelay = Math.max(relativeDelay, 0);
+            timings.animationDelay = relativeDelay;
+            delayStyle = getCssDelayStyle(relativeDelay, true);
+            temporaryStyles.push(delayStyle);
+            node.style[delayStyle[0]] = delayStyle[1];
+          }
+
+          maxDelayTime = maxDelay * ONE_SECOND;
+          maxDurationTime = maxDuration * ONE_SECOND;
+
+          if (options.easing) {
+            var easeProp, easeVal = options.easing;
+            if (flags.hasTransitions) {
+              easeProp = TRANSITION_PROP + TIMING_KEY;
+              temporaryStyles.push([easeProp, easeVal]);
+              node.style[easeProp] = easeVal;
+            }
+            if (flags.hasAnimations) {
+              easeProp = ANIMATION_PROP + TIMING_KEY;
+              temporaryStyles.push([easeProp, easeVal]);
+              node.style[easeProp] = easeVal;
+            }
+          }
+
+          if (timings.transitionDuration) {
+            events.push(TRANSITIONEND_EVENT);
+          }
+
+          if (timings.animationDuration) {
+            events.push(ANIMATIONEND_EVENT);
+          }
+
+          startTime = Date.now();
+          var timerTime = maxDelayTime + CLOSING_TIME_BUFFER * maxDurationTime;
+          var endTime = startTime + timerTime;
+
+          var animationsData = element.data(ANIMATE_TIMER_KEY) || [];
+          var setupFallbackTimer = true;
+          if (animationsData.length) {
+            var currentTimerData = animationsData[0];
+            setupFallbackTimer = endTime > currentTimerData.expectedEndTime;
+            if (setupFallbackTimer) {
+              $timeout.cancel(currentTimerData.timer);
+            } else {
+              animationsData.push(close);
+            }
+          }
+
+          if (setupFallbackTimer) {
+            var timer = $timeout(onAnimationExpired, timerTime, false);
+            animationsData[0] = {
+              timer: timer,
+              expectedEndTime: endTime
+            };
+            animationsData.push(close);
+            element.data(ANIMATE_TIMER_KEY, animationsData);
+          }
+
+          element.on(events.join(' '), onAnimationProgress);
+          if (options.to) {
+            if (options.cleanupStyles) {
+              registerRestorableStyles(restoreStyles, node, Object.keys(options.to));
+            }
+            applyAnimationToStyles(element, options);
+          }
+        }
+
+        function onAnimationExpired() {
+          var animationsData = element.data(ANIMATE_TIMER_KEY);
+
+          // this will be false in the event that the element was
+          // removed from the DOM (via a leave animation or something
+          // similar)
+          if (animationsData) {
+            for (var i = 1; i < animationsData.length; i++) {
+              animationsData[i]();
+            }
+            element.removeData(ANIMATE_TIMER_KEY);
+          }
+        }
+
+        function onAnimationProgress(event) {
+          event.stopPropagation();
+          var ev = event.originalEvent || event;
+          var timeStamp = ev.$manualTimeStamp || ev.timeStamp || Date.now();
+
+          /* Firefox (or possibly just Gecko) likes to not round values up
+           * when a ms measurement is used for the animation */
+          var elapsedTime = parseFloat(ev.elapsedTime.toFixed(ELAPSED_TIME_MAX_DECIMAL_PLACES));
+
+          /* $manualTimeStamp is a mocked timeStamp value which is set
+           * within browserTrigger(). This is only here so that tests can
+           * mock animations properly. Real events fallback to event.timeStamp,
+           * or, if they don't, then a timeStamp is automatically created for them.
+           * We're checking to see if the timeStamp surpasses the expected delay,
+           * but we're using elapsedTime instead of the timeStamp on the 2nd
+           * pre-condition since animations sometimes close off early */
+          if (Math.max(timeStamp - startTime, 0) >= maxDelayTime && elapsedTime >= maxDuration) {
+            // we set this flag to ensure that if the transition is paused then, when resumed,
+            // the animation will automatically close itself since transitions cannot be paused.
+            animationCompleted = true;
+            close();
+          }
+        }
+      }
+    };
+  }];
+}];
+
+var $$AnimateCssDriverProvider = ['$$animationProvider', function($$animationProvider) {
+  $$animationProvider.drivers.push('$$animateCssDriver');
+
+  var NG_ANIMATE_SHIM_CLASS_NAME = 'ng-animate-shim';
+  var NG_ANIMATE_ANCHOR_CLASS_NAME = 'ng-anchor';
+
+  var NG_OUT_ANCHOR_CLASS_NAME = 'ng-anchor-out';
+  var NG_IN_ANCHOR_CLASS_NAME = 'ng-anchor-in';
+
+  function isDocumentFragment(node) {
+    return node.parentNode && node.parentNode.nodeType === 11;
+  }
+
+  this.$get = ['$animateCss', '$rootScope', '$$AnimateRunner', '$rootElement', '$sniffer', '$$jqLite', '$document',
+       function($animateCss,   $rootScope,   $$AnimateRunner,   $rootElement,   $sniffer,   $$jqLite,   $document) {
+
+    // only browsers that support these properties can render animations
+    if (!$sniffer.animations && !$sniffer.transitions) return noop;
+
+    var bodyNode = $document[0].body;
+    var rootNode = getDomNode($rootElement);
+
+    var rootBodyElement = jqLite(
+      // this is to avoid using something that exists outside of the body
+      // we also special case the doc fragement case because our unit test code
+      // appends the $rootElement to the body after the app has been bootstrapped
+      isDocumentFragment(rootNode) || bodyNode.contains(rootNode) ? rootNode : bodyNode
+    );
+
+    var applyAnimationClasses = applyAnimationClassesFactory($$jqLite);
+
+    return function initDriverFn(animationDetails) {
+      return animationDetails.from && animationDetails.to
+          ? prepareFromToAnchorAnimation(animationDetails.from,
+                                         animationDetails.to,
+                                         animationDetails.classes,
+                                         animationDetails.anchors)
+          : prepareRegularAnimation(animationDetails);
+    };
+
+    function filterCssClasses(classes) {
+      //remove all the `ng-` stuff
+      return classes.replace(/\bng-\S+\b/g, '');
+    }
+
+    function getUniqueValues(a, b) {
+      if (isString(a)) a = a.split(' ');
+      if (isString(b)) b = b.split(' ');
+      return a.filter(function(val) {
+        return b.indexOf(val) === -1;
+      }).join(' ');
+    }
+
+    function prepareAnchoredAnimation(classes, outAnchor, inAnchor) {
+      var clone = jqLite(getDomNode(outAnchor).cloneNode(true));
+      var startingClasses = filterCssClasses(getClassVal(clone));
+
+      outAnchor.addClass(NG_ANIMATE_SHIM_CLASS_NAME);
+      inAnchor.addClass(NG_ANIMATE_SHIM_CLASS_NAME);
+
+      clone.addClass(NG_ANIMATE_ANCHOR_CLASS_NAME);
+
+      rootBodyElement.append(clone);
+
+      var animatorIn, animatorOut = prepareOutAnimation();
+
+      // the user may not end up using the `out` animation and
+      // only making use of the `in` animation or vice-versa.
+      // In either case we should allow this and not assume the
+      // animation is over unless both animations are not used.
+      if (!animatorOut) {
+        animatorIn = prepareInAnimation();
+        if (!animatorIn) {
+          return end();
+        }
+      }
+
+      var startingAnimator = animatorOut || animatorIn;
+
+      return {
+        start: function() {
+          var runner;
+
+          var currentAnimation = startingAnimator.start();
+          currentAnimation.done(function() {
+            currentAnimation = null;
+            if (!animatorIn) {
+              animatorIn = prepareInAnimation();
+              if (animatorIn) {
+                currentAnimation = animatorIn.start();
+                currentAnimation.done(function() {
+                  currentAnimation = null;
+                  end();
+                  runner.complete();
+                });
+                return currentAnimation;
+              }
+            }
+            // in the event that there is no `in` animation
+            end();
+            runner.complete();
+          });
+
+          runner = new $$AnimateRunner({
+            end: endFn,
+            cancel: endFn
+          });
+
+          return runner;
+
+          function endFn() {
+            if (currentAnimation) {
+              currentAnimation.end();
+            }
+          }
+        }
+      };
+
+      function calculateAnchorStyles(anchor) {
+        var styles = {};
+
+        var coords = getDomNode(anchor).getBoundingClientRect();
+
+        // we iterate directly since safari messes up and doesn't return
+        // all the keys for the coods object when iterated
+        forEach(['width','height','top','left'], function(key) {
+          var value = coords[key];
+          switch (key) {
+            case 'top':
+              value += bodyNode.scrollTop;
+              break;
+            case 'left':
+              value += bodyNode.scrollLeft;
+              break;
+          }
+          styles[key] = Math.floor(value) + 'px';
+        });
+        return styles;
+      }
+
+      function prepareOutAnimation() {
+        var animator = $animateCss(clone, {
+          addClass: NG_OUT_ANCHOR_CLASS_NAME,
+          delay: true,
+          from: calculateAnchorStyles(outAnchor)
+        });
+
+        // read the comment within `prepareRegularAnimation` to understand
+        // why this check is necessary
+        return animator.$$willAnimate ? animator : null;
+      }
+
+      function getClassVal(element) {
+        return element.attr('class') || '';
+      }
+
+      function prepareInAnimation() {
+        var endingClasses = filterCssClasses(getClassVal(inAnchor));
+        var toAdd = getUniqueValues(endingClasses, startingClasses);
+        var toRemove = getUniqueValues(startingClasses, endingClasses);
+
+        var animator = $animateCss(clone, {
+          to: calculateAnchorStyles(inAnchor),
+          addClass: NG_IN_ANCHOR_CLASS_NAME + ' ' + toAdd,
+          removeClass: NG_OUT_ANCHOR_CLASS_NAME + ' ' + toRemove,
+          delay: true
+        });
+
+        // read the comment within `prepareRegularAnimation` to understand
+        // why this check is necessary
+        return animator.$$willAnimate ? animator : null;
+      }
+
+      function end() {
+        clone.remove();
+        outAnchor.removeClass(NG_ANIMATE_SHIM_CLASS_NAME);
+        inAnchor.removeClass(NG_ANIMATE_SHIM_CLASS_NAME);
+      }
+    }
+
+    function prepareFromToAnchorAnimation(from, to, classes, anchors) {
+      var fromAnimation = prepareRegularAnimation(from, noop);
+      var toAnimation = prepareRegularAnimation(to, noop);
+
+      var anchorAnimations = [];
+      forEach(anchors, function(anchor) {
+        var outElement = anchor['out'];
+        var inElement = anchor['in'];
+        var animator = prepareAnchoredAnimation(classes, outElement, inElement);
+        if (animator) {
+          anchorAnimations.push(animator);
+        }
+      });
+
+      // no point in doing anything when there are no elements to animate
+      if (!fromAnimation && !toAnimation && anchorAnimations.length === 0) return;
+
+      return {
+        start: function() {
+          var animationRunners = [];
+
+          if (fromAnimation) {
+            animationRunners.push(fromAnimation.start());
+          }
+
+          if (toAnimation) {
+            animationRunners.push(toAnimation.start());
+          }
+
+          forEach(anchorAnimations, function(animation) {
+            animationRunners.push(animation.start());
+          });
+
+          var runner = new $$AnimateRunner({
+            end: endFn,
+            cancel: endFn // CSS-driven animations cannot be cancelled, only ended
+          });
+
+          $$AnimateRunner.all(animationRunners, function(status) {
+            runner.complete(status);
+          });
+
+          return runner;
+
+          function endFn() {
+            forEach(animationRunners, function(runner) {
+              runner.end();
+            });
+          }
+        }
+      };
+    }
+
+    function prepareRegularAnimation(animationDetails) {
+      var element = animationDetails.element;
+      var options = animationDetails.options || {};
+
+      if (animationDetails.structural) {
+        options.event = animationDetails.event;
+        options.structural = true;
+        options.applyClassesEarly = true;
+
+        // we special case the leave animation since we want to ensure that
+        // the element is removed as soon as the animation is over. Otherwise
+        // a flicker might appear or the element may not be removed at all
+        if (animationDetails.event === 'leave') {
+          options.onDone = options.domOperation;
+        }
+      }
+
+      // We assign the preparationClasses as the actual animation event since
+      // the internals of $animateCss will just suffix the event token values
+      // with `-active` to trigger the animation.
+      if (options.preparationClasses) {
+        options.event = concatWithSpace(options.event, options.preparationClasses);
+      }
+
+      var animator = $animateCss(element, options);
+
+      // the driver lookup code inside of $$animation attempts to spawn a
+      // driver one by one until a driver returns a.$$willAnimate animator object.
+      // $animateCss will always return an object, however, it will pass in
+      // a flag as a hint as to whether an animation was detected or not
+      return animator.$$willAnimate ? animator : null;
+    }
+  }];
+}];
+
+// TODO(matsko): use caching here to speed things up for detection
+// TODO(matsko): add documentation
+//  by the time...
+
+var $$AnimateJsProvider = ['$animateProvider', function($animateProvider) {
+  this.$get = ['$injector', '$$AnimateRunner', '$$jqLite',
+       function($injector,   $$AnimateRunner,   $$jqLite) {
+
+    var applyAnimationClasses = applyAnimationClassesFactory($$jqLite);
+         // $animateJs(element, 'enter');
+    return function(element, event, classes, options) {
+      // the `classes` argument is optional and if it is not used
+      // then the classes will be resolved from the element's className
+      // property as well as options.addClass/options.removeClass.
+      if (arguments.length === 3 && isObject(classes)) {
+        options = classes;
+        classes = null;
+      }
+
+      options = prepareAnimationOptions(options);
+      if (!classes) {
+        classes = element.attr('class') || '';
+        if (options.addClass) {
+          classes += ' ' + options.addClass;
+        }
+        if (options.removeClass) {
+          classes += ' ' + options.removeClass;
+        }
+      }
+
+      var classesToAdd = options.addClass;
+      var classesToRemove = options.removeClass;
+
+      // the lookupAnimations function returns a series of animation objects that are
+      // matched up with one or more of the CSS classes. These animation objects are
+      // defined via the module.animation factory function. If nothing is detected then
+      // we don't return anything which then makes $animation query the next driver.
+      var animations = lookupAnimations(classes);
+      var before, after;
+      if (animations.length) {
+        var afterFn, beforeFn;
+        if (event == 'leave') {
+          beforeFn = 'leave';
+          afterFn = 'afterLeave'; // TODO(matsko): get rid of this
+        } else {
+          beforeFn = 'before' + event.charAt(0).toUpperCase() + event.substr(1);
+          afterFn = event;
+        }
+
+        if (event !== 'enter' && event !== 'move') {
+          before = packageAnimations(element, event, options, animations, beforeFn);
+        }
+        after  = packageAnimations(element, event, options, animations, afterFn);
+      }
+
+      // no matching animations
+      if (!before && !after) return;
+
+      function applyOptions() {
+        options.domOperation();
+        applyAnimationClasses(element, options);
+      }
+
+      return {
+        start: function() {
+          var closeActiveAnimations;
+          var chain = [];
+
+          if (before) {
+            chain.push(function(fn) {
+              closeActiveAnimations = before(fn);
+            });
+          }
+
+          if (chain.length) {
+            chain.push(function(fn) {
+              applyOptions();
+              fn(true);
+            });
+          } else {
+            applyOptions();
+          }
+
+          if (after) {
+            chain.push(function(fn) {
+              closeActiveAnimations = after(fn);
+            });
+          }
+
+          var animationClosed = false;
+          var runner = new $$AnimateRunner({
+            end: function() {
+              endAnimations();
+            },
+            cancel: function() {
+              endAnimations(true);
+            }
+          });
+
+          $$AnimateRunner.chain(chain, onComplete);
+          return runner;
+
+          function onComplete(success) {
+            animationClosed = true;
+            applyOptions();
+            applyAnimationStyles(element, options);
+            runner.complete(success);
+          }
+
+          function endAnimations(cancelled) {
+            if (!animationClosed) {
+              (closeActiveAnimations || noop)(cancelled);
+              onComplete(cancelled);
+            }
+          }
+        }
+      };
+
+      function executeAnimationFn(fn, element, event, options, onDone) {
+        var args;
+        switch (event) {
+          case 'animate':
+            args = [element, options.from, options.to, onDone];
+            break;
+
+          case 'setClass':
+            args = [element, classesToAdd, classesToRemove, onDone];
+            break;
+
+          case 'addClass':
+            args = [element, classesToAdd, onDone];
+            break;
+
+          case 'removeClass':
+            args = [element, classesToRemove, onDone];
+            break;
+
+          default:
+            args = [element, onDone];
+            break;
+        }
+
+        args.push(options);
+
+        var value = fn.apply(fn, args);
+        if (value) {
+          if (isFunction(value.start)) {
+            value = value.start();
+          }
+
+          if (value instanceof $$AnimateRunner) {
+            value.done(onDone);
+          } else if (isFunction(value)) {
+            // optional onEnd / onCancel callback
+            return value;
+          }
+        }
+
+        return noop;
+      }
+
+      function groupEventedAnimations(element, event, options, animations, fnName) {
+        var operations = [];
+        forEach(animations, function(ani) {
+          var animation = ani[fnName];
+          if (!animation) return;
+
+          // note that all of these animations will run in parallel
+          operations.push(function() {
+            var runner;
+            var endProgressCb;
+
+            var resolved = false;
+            var onAnimationComplete = function(rejected) {
+              if (!resolved) {
+                resolved = true;
+                (endProgressCb || noop)(rejected);
+                runner.complete(!rejected);
+              }
+            };
+
+            runner = new $$AnimateRunner({
+              end: function() {
+                onAnimationComplete();
+              },
+              cancel: function() {
+                onAnimationComplete(true);
+              }
+            });
+
+            endProgressCb = executeAnimationFn(animation, element, event, options, function(result) {
+              var cancelled = result === false;
+              onAnimationComplete(cancelled);
+            });
+
+            return runner;
+          });
+        });
+
+        return operations;
+      }
+
+      function packageAnimations(element, event, options, animations, fnName) {
+        var operations = groupEventedAnimations(element, event, options, animations, fnName);
+        if (operations.length === 0) {
+          var a,b;
+          if (fnName === 'beforeSetClass') {
+            a = groupEventedAnimations(element, 'removeClass', options, animations, 'beforeRemoveClass');
+            b = groupEventedAnimations(element, 'addClass', options, animations, 'beforeAddClass');
+          } else if (fnName === 'setClass') {
+            a = groupEventedAnimations(element, 'removeClass', options, animations, 'removeClass');
+            b = groupEventedAnimations(element, 'addClass', options, animations, 'addClass');
+          }
+
+          if (a) {
+            operations = operations.concat(a);
+          }
+          if (b) {
+            operations = operations.concat(b);
+          }
+        }
+
+        if (operations.length === 0) return;
+
+        // TODO(matsko): add documentation
+        return function startAnimation(callback) {
+          var runners = [];
+          if (operations.length) {
+            forEach(operations, function(animateFn) {
+              runners.push(animateFn());
+            });
+          }
+
+          runners.length ? $$AnimateRunner.all(runners, callback) : callback();
+
+          return function endFn(reject) {
+            forEach(runners, function(runner) {
+              reject ? runner.cancel() : runner.end();
+            });
+          };
+        };
+      }
+    };
+
+    function lookupAnimations(classes) {
+      classes = isArray(classes) ? classes : classes.split(' ');
+      var matches = [], flagMap = {};
+      for (var i=0; i < classes.length; i++) {
+        var klass = classes[i],
+            animationFactory = $animateProvider.$$registeredAnimations[klass];
+        if (animationFactory && !flagMap[klass]) {
+          matches.push($injector.get(animationFactory));
+          flagMap[klass] = true;
+        }
+      }
+      return matches;
+    }
+  }];
+}];
+
+var $$AnimateJsDriverProvider = ['$$animationProvider', function($$animationProvider) {
+  $$animationProvider.drivers.push('$$animateJsDriver');
+  this.$get = ['$$animateJs', '$$AnimateRunner', function($$animateJs, $$AnimateRunner) {
+    return function initDriverFn(animationDetails) {
+      if (animationDetails.from && animationDetails.to) {
+        var fromAnimation = prepareAnimation(animationDetails.from);
+        var toAnimation = prepareAnimation(animationDetails.to);
+        if (!fromAnimation && !toAnimation) return;
+
+        return {
+          start: function() {
+            var animationRunners = [];
+
+            if (fromAnimation) {
+              animationRunners.push(fromAnimation.start());
+            }
+
+            if (toAnimation) {
+              animationRunners.push(toAnimation.start());
+            }
+
+            $$AnimateRunner.all(animationRunners, done);
+
+            var runner = new $$AnimateRunner({
+              end: endFnFactory(),
+              cancel: endFnFactory()
+            });
+
+            return runner;
+
+            function endFnFactory() {
+              return function() {
+                forEach(animationRunners, function(runner) {
+                  // at this point we cannot cancel animations for groups just yet. 1.5+
+                  runner.end();
+                });
+              };
+            }
+
+            function done(status) {
+              runner.complete(status);
+            }
+          }
+        };
+      } else {
+        return prepareAnimation(animationDetails);
+      }
+    };
+
+    function prepareAnimation(animationDetails) {
+      // TODO(matsko): make sure to check for grouped animations and delegate down to normal animations
+      var element = animationDetails.element;
+      var event = animationDetails.event;
+      var options = animationDetails.options;
+      var classes = animationDetails.classes;
+      return $$animateJs(element, event, classes, options);
+    }
+  }];
+}];
+
+var NG_ANIMATE_ATTR_NAME = 'data-ng-animate';
+var NG_ANIMATE_PIN_DATA = '$ngAnimatePin';
+var $$AnimateQueueProvider = ['$animateProvider', function($animateProvider) {
+  var PRE_DIGEST_STATE = 1;
+  var RUNNING_STATE = 2;
+
+  var rules = this.rules = {
+    skip: [],
+    cancel: [],
+    join: []
+  };
+
+  function isAllowed(ruleType, element, currentAnimation, previousAnimation) {
+    return rules[ruleType].some(function(fn) {
+      return fn(element, currentAnimation, previousAnimation);
+    });
+  }
+
+  function hasAnimationClasses(options, and) {
+    options = options || {};
+    var a = (options.addClass || '').length > 0;
+    var b = (options.removeClass || '').length > 0;
+    return and ? a && b : a || b;
+  }
+
+  rules.join.push(function(element, newAnimation, currentAnimation) {
+    // if the new animation is class-based then we can just tack that on
+    return !newAnimation.structural && hasAnimationClasses(newAnimation.options);
+  });
+
+  rules.skip.push(function(element, newAnimation, currentAnimation) {
+    // there is no need to animate anything if no classes are being added and
+    // there is no structural animation that will be triggered
+    return !newAnimation.structural && !hasAnimationClasses(newAnimation.options);
+  });
+
+  rules.skip.push(function(element, newAnimation, currentAnimation) {
+    // why should we trigger a new structural animation if the element will
+    // be removed from the DOM anyway?
+    return currentAnimation.event == 'leave' && newAnimation.structural;
+  });
+
+  rules.skip.push(function(element, newAnimation, currentAnimation) {
+    // if there is an ongoing current animation then don't even bother running the class-based animation
+    return currentAnimation.structural && currentAnimation.state === RUNNING_STATE && !newAnimation.structural;
+  });
+
+  rules.cancel.push(function(element, newAnimation, currentAnimation) {
+    // there can never be two structural animations running at the same time
+    return currentAnimation.structural && newAnimation.structural;
+  });
+
+  rules.cancel.push(function(element, newAnimation, currentAnimation) {
+    // if the previous animation is already running, but the new animation will
+    // be triggered, but the new animation is structural
+    return currentAnimation.state === RUNNING_STATE && newAnimation.structural;
+  });
+
+  rules.cancel.push(function(element, newAnimation, currentAnimation) {
+    var nO = newAnimation.options;
+    var cO = currentAnimation.options;
+
+    // if the exact same CSS class is added/removed then it's safe to cancel it
+    return (nO.addClass && nO.addClass === cO.removeClass) || (nO.removeClass && nO.removeClass === cO.addClass);
+  });
+
+  this.$get = ['$$rAF', '$rootScope', '$rootElement', '$document', '$$HashMap',
+               '$$animation', '$$AnimateRunner', '$templateRequest', '$$jqLite', '$$forceReflow',
+       function($$rAF,   $rootScope,   $rootElement,   $document,   $$HashMap,
+                $$animation,   $$AnimateRunner,   $templateRequest,   $$jqLite,   $$forceReflow) {
+
+    var activeAnimationsLookup = new $$HashMap();
+    var disabledElementsLookup = new $$HashMap();
+    var animationsEnabled = null;
+
+    function postDigestTaskFactory() {
+      var postDigestCalled = false;
+      return function(fn) {
+        // we only issue a call to postDigest before
+        // it has first passed. This prevents any callbacks
+        // from not firing once the animation has completed
+        // since it will be out of the digest cycle.
+        if (postDigestCalled) {
+          fn();
+        } else {
+          $rootScope.$$postDigest(function() {
+            postDigestCalled = true;
+            fn();
+          });
+        }
+      };
+    }
+
+    // Wait until all directive and route-related templates are downloaded and
+    // compiled. The $templateRequest.totalPendingRequests variable keeps track of
+    // all of the remote templates being currently downloaded. If there are no
+    // templates currently downloading then the watcher will still fire anyway.
+    var deregisterWatch = $rootScope.$watch(
+      function() { return $templateRequest.totalPendingRequests === 0; },
+      function(isEmpty) {
+        if (!isEmpty) return;
+        deregisterWatch();
+
+        // Now that all templates have been downloaded, $animate will wait until
+        // the post digest queue is empty before enabling animations. By having two
+        // calls to $postDigest calls we can ensure that the flag is enabled at the
+        // very end of the post digest queue. Since all of the animations in $animate
+        // use $postDigest, it's important that the code below executes at the end.
+        // This basically means that the page is fully downloaded and compiled before
+        // any animations are triggered.
+        $rootScope.$$postDigest(function() {
+          $rootScope.$$postDigest(function() {
+            // we check for null directly in the event that the application already called
+            // .enabled() with whatever arguments that it provided it with
+            if (animationsEnabled === null) {
+              animationsEnabled = true;
+            }
+          });
+        });
+      }
+    );
+
+    var callbackRegistry = {};
+
+    // remember that the classNameFilter is set during the provider/config
+    // stage therefore we can optimize here and setup a helper function
+    var classNameFilter = $animateProvider.classNameFilter();
+    var isAnimatableClassName = !classNameFilter
+              ? function() { return true; }
+              : function(className) {
+                return classNameFilter.test(className);
+              };
+
+    var applyAnimationClasses = applyAnimationClassesFactory($$jqLite);
+
+    function normalizeAnimationOptions(element, options) {
+      return mergeAnimationOptions(element, options, {});
+    }
+
+    function findCallbacks(parent, element, event) {
+      var targetNode = getDomNode(element);
+      var targetParentNode = getDomNode(parent);
+
+      var matches = [];
+      var entries = callbackRegistry[event];
+      if (entries) {
+        forEach(entries, function(entry) {
+          if (entry.node.contains(targetNode)) {
+            matches.push(entry.callback);
+          } else if (event === 'leave' && entry.node.contains(targetParentNode)) {
+            matches.push(entry.callback);
+          }
+        });
+      }
+
+      return matches;
+    }
+
+    return {
+      on: function(event, container, callback) {
+        var node = extractElementNode(container);
+        callbackRegistry[event] = callbackRegistry[event] || [];
+        callbackRegistry[event].push({
+          node: node,
+          callback: callback
+        });
+      },
+
+      off: function(event, container, callback) {
+        var entries = callbackRegistry[event];
+        if (!entries) return;
+
+        callbackRegistry[event] = arguments.length === 1
+            ? null
+            : filterFromRegistry(entries, container, callback);
+
+        function filterFromRegistry(list, matchContainer, matchCallback) {
+          var containerNode = extractElementNode(matchContainer);
+          return list.filter(function(entry) {
+            var isMatch = entry.node === containerNode &&
+                            (!matchCallback || entry.callback === matchCallback);
+            return !isMatch;
+          });
+        }
+      },
+
+      pin: function(element, parentElement) {
+        assertArg(isElement(element), 'element', 'not an element');
+        assertArg(isElement(parentElement), 'parentElement', 'not an element');
+        element.data(NG_ANIMATE_PIN_DATA, parentElement);
+      },
+
+      push: function(element, event, options, domOperation) {
+        options = options || {};
+        options.domOperation = domOperation;
+        return queueAnimation(element, event, options);
+      },
+
+      // this method has four signatures:
+      //  () - global getter
+      //  (bool) - global setter
+      //  (element) - element getter
+      //  (element, bool) - element setter<F37>
+      enabled: function(element, bool) {
+        var argCount = arguments.length;
+
+        if (argCount === 0) {
+          // () - Global getter
+          bool = !!animationsEnabled;
+        } else {
+          var hasElement = isElement(element);
+
+          if (!hasElement) {
+            // (bool) - Global setter
+            bool = animationsEnabled = !!element;
+          } else {
+            var node = getDomNode(element);
+            var recordExists = disabledElementsLookup.get(node);
+
+            if (argCount === 1) {
+              // (element) - Element getter
+              bool = !recordExists;
+            } else {
+              // (element, bool) - Element setter
+              bool = !!bool;
+              if (!bool) {
+                disabledElementsLookup.put(node, true);
+              } else if (recordExists) {
+                disabledElementsLookup.remove(node);
+              }
+            }
+          }
+        }
+
+        return bool;
+      }
+    };
+
+    function queueAnimation(element, event, options) {
+      var node, parent;
+      element = stripCommentsFromElement(element);
+      if (element) {
+        node = getDomNode(element);
+        parent = element.parent();
+      }
+
+      options = prepareAnimationOptions(options);
+
+      // we create a fake runner with a working promise.
+      // These methods will become available after the digest has passed
+      var runner = new $$AnimateRunner();
+
+      // this is used to trigger callbacks in postDigest mode
+      var runInNextPostDigestOrNow = postDigestTaskFactory();
+
+      if (isArray(options.addClass)) {
+        options.addClass = options.addClass.join(' ');
+      }
+
+      if (options.addClass && !isString(options.addClass)) {
+        options.addClass = null;
+      }
+
+      if (isArray(options.removeClass)) {
+        options.removeClass = options.removeClass.join(' ');
+      }
+
+      if (options.removeClass && !isString(options.removeClass)) {
+        options.removeClass = null;
+      }
+
+      if (options.from && !isObject(options.from)) {
+        options.from = null;
+      }
+
+      if (options.to && !isObject(options.to)) {
+        options.to = null;
+      }
+
+      // there are situations where a directive issues an animation for
+      // a jqLite wrapper that contains only comment nodes... If this
+      // happens then there is no way we can perform an animation
+      if (!node) {
+        close();
+        return runner;
+      }
+
+      var className = [node.className, options.addClass, options.removeClass].join(' ');
+      if (!isAnimatableClassName(className)) {
+        close();
+        return runner;
+      }
+
+      var isStructural = ['enter', 'move', 'leave'].indexOf(event) >= 0;
+
+      // this is a hard disable of all animations for the application or on
+      // the element itself, therefore  there is no need to continue further
+      // past this point if not enabled
+      var skipAnimations = !animationsEnabled || disabledElementsLookup.get(node);
+      var existingAnimation = (!skipAnimations && activeAnimationsLookup.get(node)) || {};
+      var hasExistingAnimation = !!existingAnimation.state;
+
+      // there is no point in traversing the same collection of parent ancestors if a followup
+      // animation will be run on the same element that already did all that checking work
+      if (!skipAnimations && (!hasExistingAnimation || existingAnimation.state != PRE_DIGEST_STATE)) {
+        skipAnimations = !areAnimationsAllowed(element, parent, event);
+      }
+
+      if (skipAnimations) {
+        close();
+        return runner;
+      }
+
+      if (isStructural) {
+        closeChildAnimations(element);
+      }
+
+      var newAnimation = {
+        structural: isStructural,
+        element: element,
+        event: event,
+        close: close,
+        options: options,
+        runner: runner
+      };
+
+      if (hasExistingAnimation) {
+        var skipAnimationFlag = isAllowed('skip', element, newAnimation, existingAnimation);
+        if (skipAnimationFlag) {
+          if (existingAnimation.state === RUNNING_STATE) {
+            close();
+            return runner;
+          } else {
+            mergeAnimationOptions(element, existingAnimation.options, options);
+            return existingAnimation.runner;
+          }
+        }
+
+        var cancelAnimationFlag = isAllowed('cancel', element, newAnimation, existingAnimation);
+        if (cancelAnimationFlag) {
+          if (existingAnimation.state === RUNNING_STATE) {
+            // this will end the animation right away and it is safe
+            // to do so since the animation is already running and the
+            // runner callback code will run in async
+            existingAnimation.runner.end();
+          } else if (existingAnimation.structural) {
+            // this means that the animation is queued into a digest, but
+            // hasn't started yet. Therefore it is safe to run the close
+            // method which will call the runner methods in async.
+            existingAnimation.close();
+          } else {
+            // this will merge the new animation options into existing animation options
+            mergeAnimationOptions(element, existingAnimation.options, newAnimation.options);
+            return existingAnimation.runner;
+          }
+        } else {
+          // a joined animation means that this animation will take over the existing one
+          // so an example would involve a leave animation taking over an enter. Then when
+          // the postDigest kicks in the enter will be ignored.
+          var joinAnimationFlag = isAllowed('join', element, newAnimation, existingAnimation);
+          if (joinAnimationFlag) {
+            if (existingAnimation.state === RUNNING_STATE) {
+              normalizeAnimationOptions(element, options);
+            } else {
+              applyGeneratedPreparationClasses(element, isStructural ? event : null, options);
+
+              event = newAnimation.event = existingAnimation.event;
+              options = mergeAnimationOptions(element, existingAnimation.options, newAnimation.options);
+
+              //we return the same runner since only the option values of this animation will
+              //be fed into the `existingAnimation`.
+              return existingAnimation.runner;
+            }
+          }
+        }
+      } else {
+        // normalization in this case means that it removes redundant CSS classes that
+        // already exist (addClass) or do not exist (removeClass) on the element
+        normalizeAnimationOptions(element, options);
+      }
+
+      // when the options are merged and cleaned up we may end up not having to do
+      // an animation at all, therefore we should check this before issuing a post
+      // digest callback. Structural animations will always run no matter what.
+      var isValidAnimation = newAnimation.structural;
+      if (!isValidAnimation) {
+        // animate (from/to) can be quickly checked first, otherwise we check if any classes are present
+        isValidAnimation = (newAnimation.event === 'animate' && Object.keys(newAnimation.options.to || {}).length > 0)
+                            || hasAnimationClasses(newAnimation.options);
+      }
+
+      if (!isValidAnimation) {
+        close();
+        clearElementAnimationState(element);
+        return runner;
+      }
+
+      // the counter keeps track of cancelled animations
+      var counter = (existingAnimation.counter || 0) + 1;
+      newAnimation.counter = counter;
+
+      markElementAnimationState(element, PRE_DIGEST_STATE, newAnimation);
+
+      $rootScope.$$postDigest(function() {
+        var animationDetails = activeAnimationsLookup.get(node);
+        var animationCancelled = !animationDetails;
+        animationDetails = animationDetails || {};
+
+        // if addClass/removeClass is called before something like enter then the
+        // registered parent element may not be present. The code below will ensure
+        // that a final value for parent element is obtained
+        var parentElement = element.parent() || [];
+
+        // animate/structural/class-based animations all have requirements. Otherwise there
+        // is no point in performing an animation. The parent node must also be set.
+        var isValidAnimation = parentElement.length > 0
+                                && (animationDetails.event === 'animate'
+                                    || animationDetails.structural
+                                    || hasAnimationClasses(animationDetails.options));
+
+        // this means that the previous animation was cancelled
+        // even if the follow-up animation is the same event
+        if (animationCancelled || animationDetails.counter !== counter || !isValidAnimation) {
+          // if another animation did not take over then we need
+          // to make sure that the domOperation and options are
+          // handled accordingly
+          if (animationCancelled) {
+            applyAnimationClasses(element, options);
+            applyAnimationStyles(element, options);
+          }
+
+          // if the event changed from something like enter to leave then we do
+          // it, otherwise if it's the same then the end result will be the same too
+          if (animationCancelled || (isStructural && animationDetails.event !== event)) {
+            options.domOperation();
+            runner.end();
+          }
+
+          // in the event that the element animation was not cancelled or a follow-up animation
+          // isn't allowed to animate from here then we need to clear the state of the element
+          // so that any future animations won't read the expired animation data.
+          if (!isValidAnimation) {
+            clearElementAnimationState(element);
+          }
+
+          return;
+        }
+
+        // this combined multiple class to addClass / removeClass into a setClass event
+        // so long as a structural event did not take over the animation
+        event = !animationDetails.structural && hasAnimationClasses(animationDetails.options, true)
+            ? 'setClass'
+            : animationDetails.event;
+
+        markElementAnimationState(element, RUNNING_STATE);
+        var realRunner = $$animation(element, event, animationDetails.options);
+
+        realRunner.done(function(status) {
+          close(!status);
+          var animationDetails = activeAnimationsLookup.get(node);
+          if (animationDetails && animationDetails.counter === counter) {
+            clearElementAnimationState(getDomNode(element));
+          }
+          notifyProgress(runner, event, 'close', {});
+        });
+
+        // this will update the runner's flow-control events based on
+        // the `realRunner` object.
+        runner.setHost(realRunner);
+        notifyProgress(runner, event, 'start', {});
+      });
+
+      return runner;
+
+      function notifyProgress(runner, event, phase, data) {
+        runInNextPostDigestOrNow(function() {
+          var callbacks = findCallbacks(parent, element, event);
+          if (callbacks.length) {
+            // do not optimize this call here to RAF because
+            // we don't know how heavy the callback code here will
+            // be and if this code is buffered then this can
+            // lead to a performance regression.
+            $$rAF(function() {
+              forEach(callbacks, function(callback) {
+                callback(element, phase, data);
+              });
+            });
+          }
+        });
+        runner.progress(event, phase, data);
+      }
+
+      function close(reject) { // jshint ignore:line
+        clearGeneratedClasses(element, options);
+        applyAnimationClasses(element, options);
+        applyAnimationStyles(element, options);
+        options.domOperation();
+        runner.complete(!reject);
+      }
+    }
+
+    function closeChildAnimations(element) {
+      var node = getDomNode(element);
+      var children = node.querySelectorAll('[' + NG_ANIMATE_ATTR_NAME + ']');
+      forEach(children, function(child) {
+        var state = parseInt(child.getAttribute(NG_ANIMATE_ATTR_NAME));
+        var animationDetails = activeAnimationsLookup.get(child);
+        switch (state) {
+          case RUNNING_STATE:
+            animationDetails.runner.end();
+            /* falls through */
+          case PRE_DIGEST_STATE:
+            if (animationDetails) {
+              activeAnimationsLookup.remove(child);
+            }
+            break;
+        }
+      });
+    }
+
+    function clearElementAnimationState(element) {
+      var node = getDomNode(element);
+      node.removeAttribute(NG_ANIMATE_ATTR_NAME);
+      activeAnimationsLookup.remove(node);
+    }
+
+    function isMatchingElement(nodeOrElmA, nodeOrElmB) {
+      return getDomNode(nodeOrElmA) === getDomNode(nodeOrElmB);
+    }
+
+    function areAnimationsAllowed(element, parentElement, event) {
+      var bodyElement = jqLite($document[0].body);
+      var bodyElementDetected = isMatchingElement(element, bodyElement) || element[0].nodeName === 'HTML';
+      var rootElementDetected = isMatchingElement(element, $rootElement);
+      var parentAnimationDetected = false;
+      var animateChildren;
+
+      var parentHost = element.data(NG_ANIMATE_PIN_DATA);
+      if (parentHost) {
+        parentElement = parentHost;
+      }
+
+      while (parentElement && parentElement.length) {
+        if (!rootElementDetected) {
+          // angular doesn't want to attempt to animate elements outside of the application
+          // therefore we need to ensure that the rootElement is an ancestor of the current element
+          rootElementDetected = isMatchingElement(parentElement, $rootElement);
+        }
+
+        var parentNode = parentElement[0];
+        if (parentNode.nodeType !== ELEMENT_NODE) {
+          // no point in inspecting the #document element
+          break;
+        }
+
+        var details = activeAnimationsLookup.get(parentNode) || {};
+        // either an enter, leave or move animation will commence
+        // therefore we can't allow any animations to take place
+        // but if a parent animation is class-based then that's ok
+        if (!parentAnimationDetected) {
+          parentAnimationDetected = details.structural || disabledElementsLookup.get(parentNode);
+        }
+
+        if (isUndefined(animateChildren) || animateChildren === true) {
+          var value = parentElement.data(NG_ANIMATE_CHILDREN_DATA);
+          if (isDefined(value)) {
+            animateChildren = value;
+          }
+        }
+
+        // there is no need to continue traversing at this point
+        if (parentAnimationDetected && animateChildren === false) break;
+
+        if (!rootElementDetected) {
+          // angular doesn't want to attempt to animate elements outside of the application
+          // therefore we need to ensure that the rootElement is an ancestor of the current element
+          rootElementDetected = isMatchingElement(parentElement, $rootElement);
+          if (!rootElementDetected) {
+            parentHost = parentElement.data(NG_ANIMATE_PIN_DATA);
+            if (parentHost) {
+              parentElement = parentHost;
+            }
+          }
+        }
+
+        if (!bodyElementDetected) {
+          // we also need to ensure that the element is or will be apart of the body element
+          // otherwise it is pointless to even issue an animation to be rendered
+          bodyElementDetected = isMatchingElement(parentElement, bodyElement);
+        }
+
+        parentElement = parentElement.parent();
+      }
+
+      var allowAnimation = !parentAnimationDetected || animateChildren;
+      return allowAnimation && rootElementDetected && bodyElementDetected;
+    }
+
+    function markElementAnimationState(element, state, details) {
+      details = details || {};
+      details.state = state;
+
+      var node = getDomNode(element);
+      node.setAttribute(NG_ANIMATE_ATTR_NAME, state);
+
+      var oldValue = activeAnimationsLookup.get(node);
+      var newValue = oldValue
+          ? extend(oldValue, details)
+          : details;
+      activeAnimationsLookup.put(node, newValue);
+    }
+  }];
+}];
+
+var $$AnimateAsyncRunFactory = ['$$rAF', function($$rAF) {
+  var waitQueue = [];
+
+  function waitForTick(fn) {
+    waitQueue.push(fn);
+    if (waitQueue.length > 1) return;
+    $$rAF(function() {
+      for (var i = 0; i < waitQueue.length; i++) {
+        waitQueue[i]();
+      }
+      waitQueue = [];
+    });
+  }
+
+  return function() {
+    var passed = false;
+    waitForTick(function() {
+      passed = true;
+    });
+    return function(callback) {
+      passed ? callback() : waitForTick(callback);
+    };
+  };
+}];
+
+var $$AnimateRunnerFactory = ['$q', '$sniffer', '$$animateAsyncRun',
+                      function($q,   $sniffer,   $$animateAsyncRun) {
+
+  var INITIAL_STATE = 0;
+  var DONE_PENDING_STATE = 1;
+  var DONE_COMPLETE_STATE = 2;
+
+  AnimateRunner.chain = function(chain, callback) {
+    var index = 0;
+
+    next();
+    function next() {
+      if (index === chain.length) {
+        callback(true);
+        return;
+      }
+
+      chain[index](function(response) {
+        if (response === false) {
+          callback(false);
+          return;
+        }
+        index++;
+        next();
+      });
+    }
+  };
+
+  AnimateRunner.all = function(runners, callback) {
+    var count = 0;
+    var status = true;
+    forEach(runners, function(runner) {
+      runner.done(onProgress);
+    });
+
+    function onProgress(response) {
+      status = status && response;
+      if (++count === runners.length) {
+        callback(status);
+      }
+    }
+  };
+
+  function AnimateRunner(host) {
+    this.setHost(host);
+
+    this._doneCallbacks = [];
+    this._runInAnimationFrame = $$animateAsyncRun();
+    this._state = 0;
+  }
+
+  AnimateRunner.prototype = {
+    setHost: function(host) {
+      this.host = host || {};
+    },
+
+    done: function(fn) {
+      if (this._state === DONE_COMPLETE_STATE) {
+        fn();
+      } else {
+        this._doneCallbacks.push(fn);
+      }
+    },
+
+    progress: noop,
+
+    getPromise: function() {
+      if (!this.promise) {
+        var self = this;
+        this.promise = $q(function(resolve, reject) {
+          self.done(function(status) {
+            status === false ? reject() : resolve();
+          });
+        });
+      }
+      return this.promise;
+    },
+
+    then: function(resolveHandler, rejectHandler) {
+      return this.getPromise().then(resolveHandler, rejectHandler);
+    },
+
+    'catch': function(handler) {
+      return this.getPromise()['catch'](handler);
+    },
+
+    'finally': function(handler) {
+      return this.getPromise()['finally'](handler);
+    },
+
+    pause: function() {
+      if (this.host.pause) {
+        this.host.pause();
+      }
+    },
+
+    resume: function() {
+      if (this.host.resume) {
+        this.host.resume();
+      }
+    },
+
+    end: function() {
+      if (this.host.end) {
+        this.host.end();
+      }
+      this._resolve(true);
+    },
+
+    cancel: function() {
+      if (this.host.cancel) {
+        this.host.cancel();
+      }
+      this._resolve(false);
+    },
+
+    complete: function(response) {
+      var self = this;
+      if (self._state === INITIAL_STATE) {
+        self._state = DONE_PENDING_STATE;
+        self._runInAnimationFrame(function() {
+          self._resolve(response);
+        });
+      }
+    },
+
+    _resolve: function(response) {
+      if (this._state !== DONE_COMPLETE_STATE) {
+        forEach(this._doneCallbacks, function(fn) {
+          fn(response);
+        });
+        this._doneCallbacks.length = 0;
+        this._state = DONE_COMPLETE_STATE;
+      }
+    }
+  };
+
+  return AnimateRunner;
+}];
+
+var $$AnimationProvider = ['$animateProvider', function($animateProvider) {
+  var NG_ANIMATE_REF_ATTR = 'ng-animate-ref';
+
+  var drivers = this.drivers = [];
+
+  var RUNNER_STORAGE_KEY = '$$animationRunner';
+
+  function setRunner(element, runner) {
+    element.data(RUNNER_STORAGE_KEY, runner);
+  }
+
+  function removeRunner(element) {
+    element.removeData(RUNNER_STORAGE_KEY);
+  }
+
+  function getRunner(element) {
+    return element.data(RUNNER_STORAGE_KEY);
+  }
+
+  this.$get = ['$$jqLite', '$rootScope', '$injector', '$$AnimateRunner', '$$HashMap', '$$rAFScheduler',
+       function($$jqLite,   $rootScope,   $injector,   $$AnimateRunner,   $$HashMap,   $$rAFScheduler) {
+
+    var animationQueue = [];
+    var applyAnimationClasses = applyAnimationClassesFactory($$jqLite);
+
+    function sortAnimations(animations) {
+      var tree = { children: [] };
+      var i, lookup = new $$HashMap();
+
+      // this is done first beforehand so that the hashmap
+      // is filled with a list of the elements that will be animated
+      for (i = 0; i < animations.length; i++) {
+        var animation = animations[i];
+        lookup.put(animation.domNode, animations[i] = {
+          domNode: animation.domNode,
+          fn: animation.fn,
+          children: []
+        });
+      }
+
+      for (i = 0; i < animations.length; i++) {
+        processNode(animations[i]);
+      }
+
+      return flatten(tree);
+
+      function processNode(entry) {
+        if (entry.processed) return entry;
+        entry.processed = true;
+
+        var elementNode = entry.domNode;
+        var parentNode = elementNode.parentNode;
+        lookup.put(elementNode, entry);
+
+        var parentEntry;
+        while (parentNode) {
+          parentEntry = lookup.get(parentNode);
+          if (parentEntry) {
+            if (!parentEntry.processed) {
+              parentEntry = processNode(parentEntry);
+            }
+            break;
+          }
+          parentNode = parentNode.parentNode;
+        }
+
+        (parentEntry || tree).children.push(entry);
+        return entry;
+      }
+
+      function flatten(tree) {
+        var result = [];
+        var queue = [];
+        var i;
+
+        for (i = 0; i < tree.children.length; i++) {
+          queue.push(tree.children[i]);
+        }
+
+        var remainingLevelEntries = queue.length;
+        var nextLevelEntries = 0;
+        var row = [];
+
+        for (i = 0; i < queue.length; i++) {
+          var entry = queue[i];
+          if (remainingLevelEntries <= 0) {
+            remainingLevelEntries = nextLevelEntries;
+            nextLevelEntries = 0;
+            result.push(row);
+            row = [];
+          }
+          row.push(entry.fn);
+          entry.children.forEach(function(childEntry) {
+            nextLevelEntries++;
+            queue.push(childEntry);
+          });
+          remainingLevelEntries--;
+        }
+
+        if (row.length) {
+          result.push(row);
+        }
+
+        return result;
+      }
+    }
+
+    // TODO(matsko): document the signature in a better way
+    return function(element, event, options) {
+      options = prepareAnimationOptions(options);
+      var isStructural = ['enter', 'move', 'leave'].indexOf(event) >= 0;
+
+      // there is no animation at the current moment, however
+      // these runner methods will get later updated with the
+      // methods leading into the driver's end/cancel methods
+      // for now they just stop the animation from starting
+      var runner = new $$AnimateRunner({
+        end: function() { close(); },
+        cancel: function() { close(true); }
+      });
+
+      if (!drivers.length) {
+        close();
+        return runner;
+      }
+
+      setRunner(element, runner);
+
+      var classes = mergeClasses(element.attr('class'), mergeClasses(options.addClass, options.removeClass));
+      var tempClasses = options.tempClasses;
+      if (tempClasses) {
+        classes += ' ' + tempClasses;
+        options.tempClasses = null;
+      }
+
+      animationQueue.push({
+        // this data is used by the postDigest code and passed into
+        // the driver step function
+        element: element,
+        classes: classes,
+        event: event,
+        structural: isStructural,
+        options: options,
+        beforeStart: beforeStart,
+        close: close
+      });
+
+      element.on('$destroy', handleDestroyedElement);
+
+      // we only want there to be one function called within the post digest
+      // block. This way we can group animations for all the animations that
+      // were apart of the same postDigest flush call.
+      if (animationQueue.length > 1) return runner;
+
+      $rootScope.$$postDigest(function() {
+        var animations = [];
+        forEach(animationQueue, function(entry) {
+          // the element was destroyed early on which removed the runner
+          // form its storage. This means we can't animate this element
+          // at all and it already has been closed due to destruction.
+          if (getRunner(entry.element)) {
+            animations.push(entry);
+          } else {
+            entry.close();
+          }
+        });
+
+        // now any future animations will be in another postDigest
+        animationQueue.length = 0;
+
+        var groupedAnimations = groupAnimations(animations);
+        var toBeSortedAnimations = [];
+
+        forEach(groupedAnimations, function(animationEntry) {
+          toBeSortedAnimations.push({
+            domNode: getDomNode(animationEntry.from ? animationEntry.from.element : animationEntry.element),
+            fn: function triggerAnimationStart() {
+              // it's important that we apply the `ng-animate` CSS class and the
+              // temporary classes before we do any driver invoking since these
+              // CSS classes may be required for proper CSS detection.
+              animationEntry.beforeStart();
+
+              var startAnimationFn, closeFn = animationEntry.close;
+
+              // in the event that the element was removed before the digest runs or
+              // during the RAF sequencing then we should not trigger the animation.
+              var targetElement = animationEntry.anchors
+                  ? (animationEntry.from.element || animationEntry.to.element)
+                  : animationEntry.element;
+
+              if (getRunner(targetElement)) {
+                var operation = invokeFirstDriver(animationEntry);
+                if (operation) {
+                  startAnimationFn = operation.start;
+                }
+              }
+
+              if (!startAnimationFn) {
+                closeFn();
+              } else {
+                var animationRunner = startAnimationFn();
+                animationRunner.done(function(status) {
+                  closeFn(!status);
+                });
+                updateAnimationRunners(animationEntry, animationRunner);
+              }
+            }
+          });
+        });
+
+        // we need to sort each of the animations in order of parent to child
+        // relationships. This ensures that the child classes are applied at the
+        // right time.
+        $$rAFScheduler(sortAnimations(toBeSortedAnimations));
+      });
+
+      return runner;
+
+      // TODO(matsko): change to reference nodes
+      function getAnchorNodes(node) {
+        var SELECTOR = '[' + NG_ANIMATE_REF_ATTR + ']';
+        var items = node.hasAttribute(NG_ANIMATE_REF_ATTR)
+              ? [node]
+              : node.querySelectorAll(SELECTOR);
+        var anchors = [];
+        forEach(items, function(node) {
+          var attr = node.getAttribute(NG_ANIMATE_REF_ATTR);
+          if (attr && attr.length) {
+            anchors.push(node);
+          }
+        });
+        return anchors;
+      }
+
+      function groupAnimations(animations) {
+        var preparedAnimations = [];
+        var refLookup = {};
+        forEach(animations, function(animation, index) {
+          var element = animation.element;
+          var node = getDomNode(element);
+          var event = animation.event;
+          var enterOrMove = ['enter', 'move'].indexOf(event) >= 0;
+          var anchorNodes = animation.structural ? getAnchorNodes(node) : [];
+
+          if (anchorNodes.length) {
+            var direction = enterOrMove ? 'to' : 'from';
+
+            forEach(anchorNodes, function(anchor) {
+              var key = anchor.getAttribute(NG_ANIMATE_REF_ATTR);
+              refLookup[key] = refLookup[key] || {};
+              refLookup[key][direction] = {
+                animationID: index,
+                element: jqLite(anchor)
+              };
+            });
+          } else {
+            preparedAnimations.push(animation);
+          }
+        });
+
+        var usedIndicesLookup = {};
+        var anchorGroups = {};
+        forEach(refLookup, function(operations, key) {
+          var from = operations.from;
+          var to = operations.to;
+
+          if (!from || !to) {
+            // only one of these is set therefore we can't have an
+            // anchor animation since all three pieces are required
+            var index = from ? from.animationID : to.animationID;
+            var indexKey = index.toString();
+            if (!usedIndicesLookup[indexKey]) {
+              usedIndicesLookup[indexKey] = true;
+              preparedAnimations.push(animations[index]);
+            }
+            return;
+          }
+
+          var fromAnimation = animations[from.animationID];
+          var toAnimation = animations[to.animationID];
+          var lookupKey = from.animationID.toString();
+          if (!anchorGroups[lookupKey]) {
+            var group = anchorGroups[lookupKey] = {
+              structural: true,
+              beforeStart: function() {
+                fromAnimation.beforeStart();
+                toAnimation.beforeStart();
+              },
+              close: function() {
+                fromAnimation.close();
+                toAnimation.close();
+              },
+              classes: cssClassesIntersection(fromAnimation.classes, toAnimation.classes),
+              from: fromAnimation,
+              to: toAnimation,
+              anchors: [] // TODO(matsko): change to reference nodes
+            };
+
+            // the anchor animations require that the from and to elements both have at least
+            // one shared CSS class which effictively marries the two elements together to use
+            // the same animation driver and to properly sequence the anchor animation.
+            if (group.classes.length) {
+              preparedAnimations.push(group);
+            } else {
+              preparedAnimations.push(fromAnimation);
+              preparedAnimations.push(toAnimation);
+            }
+          }
+
+          anchorGroups[lookupKey].anchors.push({
+            'out': from.element, 'in': to.element
+          });
+        });
+
+        return preparedAnimations;
+      }
+
+      function cssClassesIntersection(a,b) {
+        a = a.split(' ');
+        b = b.split(' ');
+        var matches = [];
+
+        for (var i = 0; i < a.length; i++) {
+          var aa = a[i];
+          if (aa.substring(0,3) === 'ng-') continue;
+
+          for (var j = 0; j < b.length; j++) {
+            if (aa === b[j]) {
+              matches.push(aa);
+              break;
+            }
+          }
+        }
+
+        return matches.join(' ');
+      }
+
+      function invokeFirstDriver(animationDetails) {
+        // we loop in reverse order since the more general drivers (like CSS and JS)
+        // may attempt more elements, but custom drivers are more particular
+        for (var i = drivers.length - 1; i >= 0; i--) {
+          var driverName = drivers[i];
+          if (!$injector.has(driverName)) continue; // TODO(matsko): remove this check
+
+          var factory = $injector.get(driverName);
+          var driver = factory(animationDetails);
+          if (driver) {
+            return driver;
+          }
+        }
+      }
+
+      function beforeStart() {
+        element.addClass(NG_ANIMATE_CLASSNAME);
+        if (tempClasses) {
+          $$jqLite.addClass(element, tempClasses);
+        }
+      }
+
+      function updateAnimationRunners(animation, newRunner) {
+        if (animation.from && animation.to) {
+          update(animation.from.element);
+          update(animation.to.element);
+        } else {
+          update(animation.element);
+        }
+
+        function update(element) {
+          getRunner(element).setHost(newRunner);
+        }
+      }
+
+      function handleDestroyedElement() {
+        var runner = getRunner(element);
+        if (runner && (event !== 'leave' || !options.$$domOperationFired)) {
+          runner.end();
+        }
+      }
+
+      function close(rejected) { // jshint ignore:line
+        element.off('$destroy', handleDestroyedElement);
+        removeRunner(element);
+
+        applyAnimationClasses(element, options);
+        applyAnimationStyles(element, options);
+        options.domOperation();
+
+        if (tempClasses) {
+          $$jqLite.removeClass(element, tempClasses);
+        }
+
+        element.removeClass(NG_ANIMATE_CLASSNAME);
+        runner.complete(!rejected);
+      }
+    };
+  }];
+}];
+
+/* global angularAnimateModule: true,
+
+   $$AnimateAsyncRunFactory,
+   $$rAFSchedulerFactory,
+   $$AnimateChildrenDirective,
+   $$AnimateRunnerFactory,
+   $$AnimateQueueProvider,
+   $$AnimationProvider,
+   $AnimateCssProvider,
+   $$AnimateCssDriverProvider,
+   $$AnimateJsProvider,
+   $$AnimateJsDriverProvider,
+*/
+
+/**
+ * @ngdoc module
+ * @name ngAnimate
+ * @description
+ *
+ * The `ngAnimate` module provides support for CSS-based animations (keyframes and transitions) as well as JavaScript-based animations via
+ * callback hooks. Animations are not enabled by default, however, by including `ngAnimate` the animation hooks are enabled for an Angular app.
+ *
+ * <div doc-module-components="ngAnimate"></div>
+ *
+ * # Usage
+ * Simply put, there are two ways to make use of animations when ngAnimate is used: by using **CSS** and **JavaScript**. The former works purely based
+ * using CSS (by using matching CSS selectors/styles) and the latter triggers animations that are registered via `module.animation()`. For
+ * both CSS and JS animations the sole requirement is to have a matching `CSS class` that exists both in the registered animation and within
+ * the HTML element that the animation will be triggered on.
+ *
+ * ## Directive Support
+ * The following directives are "animation aware":
+ *
+ * | Directive                                                                                                | Supported Animations                                                     |
+ * |----------------------------------------------------------------------------------------------------------|--------------------------------------------------------------------------|
+ * | {@link ng.directive:ngRepeat#animations ngRepeat}                                                        | enter, leave and move                                                    |
+ * | {@link ngRoute.directive:ngView#animations ngView}                                                       | enter and leave                                                          |
+ * | {@link ng.directive:ngInclude#animations ngInclude}                                                      | enter and leave                                                          |
+ * | {@link ng.directive:ngSwitch#animations ngSwitch}                                                        | enter and leave                                                          |
+ * | {@link ng.directive:ngIf#animations ngIf}                                                                | enter and leave                                                          |
+ * | {@link ng.directive:ngClass#animations ngClass}                                                          | add and remove (the CSS class(es) present)                               |
+ * | {@link ng.directive:ngShow#animations ngShow} & {@link ng.directive:ngHide#animations ngHide}            | add and remove (the ng-hide class value)                                 |
+ * | {@link ng.directive:form#animation-hooks form} & {@link ng.directive:ngModel#animation-hooks ngModel}    | add and remove (dirty, pristine, valid, invalid & all other validations) |
+ * | {@link module:ngMessages#animations ngMessages}                                                          | add and remove (ng-active & ng-inactive)                                 |
+ * | {@link module:ngMessages#animations ngMessage}                                                           | enter and leave                                                          |
+ *
+ * (More information can be found by visiting each the documentation associated with each directive.)
+ *
+ * ## CSS-based Animations
+ *
+ * CSS-based animations with ngAnimate are unique since they require no JavaScript code at all. By using a CSS class that we reference between our HTML
+ * and CSS code we can create an animation that will be picked up by Angular when an the underlying directive performs an operation.
+ *
+ * The example below shows how an `enter` animation can be made possible on an element using `ng-if`:
+ *
+ * ```html
+ * <div ng-if="bool" class="fade">
+ *    Fade me in out
+ * </div>
+ * <button ng-click="bool=true">Fade In!</button>
+ * <button ng-click="bool=false">Fade Out!</button>
+ * ```
+ *
+ * Notice the CSS class **fade**? We can now create the CSS transition code that references this class:
+ *
+ * ```css
+ * /&#42; The starting CSS styles for the enter animation &#42;/
+ * .fade.ng-enter {
+ *   transition:0.5s linear all;
+ *   opacity:0;
+ * }
+ *
+ * /&#42; The finishing CSS styles for the enter animation &#42;/
+ * .fade.ng-enter.ng-enter-active {
+ *   opacity:1;
+ * }
+ * ```
+ *
+ * The key thing to remember here is that, depending on the animation event (which each of the directives above trigger depending on what's going on) two
+ * generated CSS classes will be applied to the element; in the example above we have `.ng-enter` and `.ng-enter-active`. For CSS transitions, the transition
+ * code **must** be defined within the starting CSS class (in this case `.ng-enter`). The destination class is what the transition will animate towards.
+ *
+ * If for example we wanted to create animations for `leave` and `move` (ngRepeat triggers move) then we can do so using the same CSS naming conventions:
+ *
+ * ```css
+ * /&#42; now the element will fade out before it is removed from the DOM &#42;/
+ * .fade.ng-leave {
+ *   transition:0.5s linear all;
+ *   opacity:1;
+ * }
+ * .fade.ng-leave.ng-leave-active {
+ *   opacity:0;
+ * }
+ * ```
+ *
+ * We can also make use of **CSS Keyframes** by referencing the keyframe animation within the starting CSS class:
+ *
+ * ```css
+ * /&#42; there is no need to define anything inside of the destination
+ * CSS class since the keyframe will take charge of the animation &#42;/
+ * .fade.ng-leave {
+ *   animation: my_fade_animation 0.5s linear;
+ *   -webkit-animation: my_fade_animation 0.5s linear;
+ * }
+ *
+ * @keyframes my_fade_animation {
+ *   from { opacity:1; }
+ *   to { opacity:0; }
+ * }
+ *
+ * @-webkit-keyframes my_fade_animation {
+ *   from { opacity:1; }
+ *   to { opacity:0; }
+ * }
+ * ```
+ *
+ * Feel free also mix transitions and keyframes together as well as any other CSS classes on the same element.
+ *
+ * ### CSS Class-based Animations
+ *
+ * Class-based animations (animations that are triggered via `ngClass`, `ngShow`, `ngHide` and some other directives) have a slightly different
+ * naming convention. Class-based animations are basic enough that a standard transition or keyframe can be referenced on the class being added
+ * and removed.
+ *
+ * For example if we wanted to do a CSS animation for `ngHide` then we place an animation on the `.ng-hide` CSS class:
+ *
+ * ```html
+ * <div ng-show="bool" class="fade">
+ *   Show and hide me
+ * </div>
+ * <button ng-click="bool=true">Toggle</button>
+ *
+ * <style>
+ * .fade.ng-hide {
+ *   transition:0.5s linear all;
+ *   opacity:0;
+ * }
+ * </style>
+ * ```
+ *
+ * All that is going on here with ngShow/ngHide behind the scenes is the `.ng-hide` class is added/removed (when the hidden state is valid). Since
+ * ngShow and ngHide are animation aware then we can match up a transition and ngAnimate handles the rest.
+ *
+ * In addition the addition and removal of the CSS class, ngAnimate also provides two helper methods that we can use to further decorate the animation
+ * with CSS styles.
+ *
+ * ```html
+ * <div ng-class="{on:onOff}" class="highlight">
+ *   Highlight this box
+ * </div>
+ * <button ng-click="onOff=!onOff">Toggle</button>
+ *
+ * <style>
+ * .highlight {
+ *   transition:0.5s linear all;
+ * }
+ * .highlight.on-add {
+ *   background:white;
+ * }
+ * .highlight.on {
+ *   background:yellow;
+ * }
+ * .highlight.on-remove {
+ *   background:black;
+ * }
+ * </style>
+ * ```
+ *
+ * We can also make use of CSS keyframes by placing them within the CSS classes.
+ *
+ *
+ * ### CSS Staggering Animations
+ * A Staggering animation is a collection of animations that are issued with a slight delay in between each successive operation resulting in a
+ * curtain-like effect. The ngAnimate module (versions >=1.2) supports staggering animations and the stagger effect can be
+ * performed by creating a **ng-EVENT-stagger** CSS class and attaching that class to the base CSS class used for
+ * the animation. The style property expected within the stagger class can either be a **transition-delay** or an
+ * **animation-delay** property (or both if your animation contains both transitions and keyframe animations).
+ *
+ * ```css
+ * .my-animation.ng-enter {
+ *   /&#42; standard transition code &#42;/
+ *   transition: 1s linear all;
+ *   opacity:0;
+ * }
+ * .my-animation.ng-enter-stagger {
+ *   /&#42; this will have a 100ms delay between each successive leave animation &#42;/
+ *   transition-delay: 0.1s;
+ *
+ *   /&#42; As of 1.4.4, this must always be set: it signals ngAnimate
+ *     to not accidentally inherit a delay property from another CSS class &#42;/
+ *   transition-duration: 0s;
+ * }
+ * .my-animation.ng-enter.ng-enter-active {
+ *   /&#42; standard transition styles &#42;/
+ *   opacity:1;
+ * }
+ * ```
+ *
+ * Staggering animations work by default in ngRepeat (so long as the CSS class is defined). Outside of ngRepeat, to use staggering animations
+ * on your own, they can be triggered by firing multiple calls to the same event on $animate. However, the restrictions surrounding this
+ * are that each of the elements must have the same CSS className value as well as the same parent element. A stagger operation
+ * will also be reset if one or more animation frames have passed since the multiple calls to `$animate` were fired.
+ *
+ * The following code will issue the **ng-leave-stagger** event on the element provided:
+ *
+ * ```js
+ * var kids = parent.children();
+ *
+ * $animate.leave(kids[0]); //stagger index=0
+ * $animate.leave(kids[1]); //stagger index=1
+ * $animate.leave(kids[2]); //stagger index=2
+ * $animate.leave(kids[3]); //stagger index=3
+ * $animate.leave(kids[4]); //stagger index=4
+ *
+ * window.requestAnimationFrame(function() {
+ *   //stagger has reset itself
+ *   $animate.leave(kids[5]); //stagger index=0
+ *   $animate.leave(kids[6]); //stagger index=1
+ *
+ *   $scope.$digest();
+ * });
+ * ```
+ *
+ * Stagger animations are currently only supported within CSS-defined animations.
+ *
+ * ### The `ng-animate` CSS class
+ *
+ * When ngAnimate is animating an element it will apply the `ng-animate` CSS class to the element for the duration of the animation.
+ * This is a temporary CSS class and it will be removed once the animation is over (for both JavaScript and CSS-based animations).
+ *
+ * Therefore, animations can be applied to an element using this temporary class directly via CSS.
+ *
+ * ```css
+ * .zipper.ng-animate {
+ *   transition:0.5s linear all;
+ * }
+ * .zipper.ng-enter {
+ *   opacity:0;
+ * }
+ * .zipper.ng-enter.ng-enter-active {
+ *   opacity:1;
+ * }
+ * .zipper.ng-leave {
+ *   opacity:1;
+ * }
+ * .zipper.ng-leave.ng-leave-active {
+ *   opacity:0;
+ * }
+ * ```
+ *
+ * (Note that the `ng-animate` CSS class is reserved and it cannot be applied on an element directly since ngAnimate will always remove
+ * the CSS class once an animation has completed.)
+ *
+ *
+ * ## JavaScript-based Animations
+ *
+ * ngAnimate also allows for animations to be consumed by JavaScript code. The approach is similar to CSS-based animations (where there is a shared
+ * CSS class that is referenced in our HTML code) but in addition we need to register the JavaScript animation on the module. By making use of the
+ * `module.animation()` module function we can register the ainmation.
+ *
+ * Let's see an example of a enter/leave animation using `ngRepeat`:
+ *
+ * ```html
+ * <div ng-repeat="item in items" class="slide">
+ *   {{ item }}
+ * </div>
+ * ```
+ *
+ * See the **slide** CSS class? Let's use that class to define an animation that we'll structure in our module code by using `module.animation`:
+ *
+ * ```js
+ * myModule.animation('.slide', [function() {
+ *   return {
+ *     // make note that other events (like addClass/removeClass)
+ *     // have different function input parameters
+ *     enter: function(element, doneFn) {
+ *       jQuery(element).fadeIn(1000, doneFn);
+ *
+ *       // remember to call doneFn so that angular
+ *       // knows that the animation has concluded
+ *     },
+ *
+ *     move: function(element, doneFn) {
+ *       jQuery(element).fadeIn(1000, doneFn);
+ *     },
+ *
+ *     leave: function(element, doneFn) {
+ *       jQuery(element).fadeOut(1000, doneFn);
+ *     }
+ *   }
+ * }]);
+ * ```
+ *
+ * The nice thing about JS-based animations is that we can inject other services and make use of advanced animation libraries such as
+ * greensock.js and velocity.js.
+ *
+ * If our animation code class-based (meaning that something like `ngClass`, `ngHide` and `ngShow` triggers it) then we can still define
+ * our animations inside of the same registered animation, however, the function input arguments are a bit different:
+ *
+ * ```html
+ * <div ng-class="color" class="colorful">
+ *   this box is moody
+ * </div>
+ * <button ng-click="color='red'">Change to red</button>
+ * <button ng-click="color='blue'">Change to blue</button>
+ * <button ng-click="color='green'">Change to green</button>
+ * ```
+ *
+ * ```js
+ * myModule.animation('.colorful', [function() {
+ *   return {
+ *     addClass: function(element, className, doneFn) {
+ *       // do some cool animation and call the doneFn
+ *     },
+ *     removeClass: function(element, className, doneFn) {
+ *       // do some cool animation and call the doneFn
+ *     },
+ *     setClass: function(element, addedClass, removedClass, doneFn) {
+ *       // do some cool animation and call the doneFn
+ *     }
+ *   }
+ * }]);
+ * ```
+ *
+ * ## CSS + JS Animations Together
+ *
+ * AngularJS 1.4 and higher has taken steps to make the amalgamation of CSS and JS animations more flexible. However, unlike earlier versions of Angular,
+ * defining CSS and JS animations to work off of the same CSS class will not work anymore. Therefore the example below will only result in **JS animations taking
+ * charge of the animation**:
+ *
+ * ```html
+ * <div ng-if="bool" class="slide">
+ *   Slide in and out
+ * </div>
+ * ```
+ *
+ * ```js
+ * myModule.animation('.slide', [function() {
+ *   return {
+ *     enter: function(element, doneFn) {
+ *       jQuery(element).slideIn(1000, doneFn);
+ *     }
+ *   }
+ * }]);
+ * ```
+ *
+ * ```css
+ * .slide.ng-enter {
+ *   transition:0.5s linear all;
+ *   transform:translateY(-100px);
+ * }
+ * .slide.ng-enter.ng-enter-active {
+ *   transform:translateY(0);
+ * }
+ * ```
+ *
+ * Does this mean that CSS and JS animations cannot be used together? Do JS-based animations always have higher priority? We can make up for the
+ * lack of CSS animations by using the `$animateCss` service to trigger our own tweaked-out, CSS-based animations directly from
+ * our own JS-based animation code:
+ *
+ * ```js
+ * myModule.animation('.slide', ['$animateCss', function($animateCss) {
+ *   return {
+ *     enter: function(element) {
+*        // this will trigger `.slide.ng-enter` and `.slide.ng-enter-active`.
+ *       return $animateCss(element, {
+ *         event: 'enter',
+ *         structural: true
+ *       });
+ *     }
+ *   }
+ * }]);
+ * ```
+ *
+ * The nice thing here is that we can save bandwidth by sticking to our CSS-based animation code and we don't need to rely on a 3rd-party animation framework.
+ *
+ * The `$animateCss` service is very powerful since we can feed in all kinds of extra properties that will be evaluated and fed into a CSS transition or
+ * keyframe animation. For example if we wanted to animate the height of an element while adding and removing classes then we can do so by providing that
+ * data into `$animateCss` directly:
+ *
+ * ```js
+ * myModule.animation('.slide', ['$animateCss', function($animateCss) {
+ *   return {
+ *     enter: function(element) {
+ *       return $animateCss(element, {
+ *         event: 'enter',
+ *         structural: true,
+ *         addClass: 'maroon-setting',
+ *         from: { height:0 },
+ *         to: { height: 200 }
+ *       });
+ *     }
+ *   }
+ * }]);
+ * ```
+ *
+ * Now we can fill in the rest via our transition CSS code:
+ *
+ * ```css
+ * /&#42; the transition tells ngAnimate to make the animation happen &#42;/
+ * .slide.ng-enter { transition:0.5s linear all; }
+ *
+ * /&#42; this extra CSS class will be absorbed into the transition
+ * since the $animateCss code is adding the class &#42;/
+ * .maroon-setting { background:red; }
+ * ```
+ *
+ * And `$animateCss` will figure out the rest. Just make sure to have the `done()` callback fire the `doneFn` function to signal when the animation is over.
+ *
+ * To learn more about what's possible be sure to visit the {@link ngAnimate.$animateCss $animateCss service}.
+ *
+ * ## Animation Anchoring (via `ng-animate-ref`)
+ *
+ * ngAnimate in AngularJS 1.4 comes packed with the ability to cross-animate elements between
+ * structural areas of an application (like views) by pairing up elements using an attribute
+ * called `ng-animate-ref`.
+ *
+ * Let's say for example we have two views that are managed by `ng-view` and we want to show
+ * that there is a relationship between two components situated in within these views. By using the
+ * `ng-animate-ref` attribute we can identify that the two components are paired together and we
+ * can then attach an animation, which is triggered when the view changes.
+ *
+ * Say for example we have the following template code:
+ *
+ * ```html
+ * <!-- index.html -->
+ * <div ng-view class="view-animation">
+ * </div>
+ *
+ * <!-- home.html -->
+ * <a href="#/banner-page">
+ *   <img src="./banner.jpg" class="banner" ng-animate-ref="banner">
+ * </a>
+ *
+ * <!-- banner-page.html -->
+ * <img src="./banner.jpg" class="banner" ng-animate-ref="banner">
+ * ```
+ *
+ * Now, when the view changes (once the link is clicked), ngAnimate will examine the
+ * HTML contents to see if there is a match reference between any components in the view
+ * that is leaving and the view that is entering. It will scan both the view which is being
+ * removed (leave) and inserted (enter) to see if there are any paired DOM elements that
+ * contain a matching ref value.
+ *
+ * The two images match since they share the same ref value. ngAnimate will now create a
+ * transport element (which is a clone of the first image element) and it will then attempt
+ * to animate to the position of the second image element in the next view. For the animation to
+ * work a special CSS class called `ng-anchor` will be added to the transported element.
+ *
+ * We can now attach a transition onto the `.banner.ng-anchor` CSS class and then
+ * ngAnimate will handle the entire transition for us as well as the addition and removal of
+ * any changes of CSS classes between the elements:
+ *
+ * ```css
+ * .banner.ng-anchor {
+ *   /&#42; this animation will last for 1 second since there are
+ *          two phases to the animation (an `in` and an `out` phase) &#42;/
+ *   transition:0.5s linear all;
+ * }
+ * ```
+ *
+ * We also **must** include animations for the views that are being entered and removed
+ * (otherwise anchoring wouldn't be possible since the new view would be inserted right away).
+ *
+ * ```css
+ * .view-animation.ng-enter, .view-animation.ng-leave {
+ *   transition:0.5s linear all;
+ *   position:fixed;
+ *   left:0;
+ *   top:0;
+ *   width:100%;
+ * }
+ * .view-animation.ng-enter {
+ *   transform:translateX(100%);
+ * }
+ * .view-animation.ng-leave,
+ * .view-animation.ng-enter.ng-enter-active {
+ *   transform:translateX(0%);
+ * }
+ * .view-animation.ng-leave.ng-leave-active {
+ *   transform:translateX(-100%);
+ * }
+ * ```
+ *
+ * Now we can jump back to the anchor animation. When the animation happens, there are two stages that occur:
+ * an `out` and an `in` stage. The `out` stage happens first and that is when the element is animated away
+ * from its origin. Once that animation is over then the `in` stage occurs which animates the
+ * element to its destination. The reason why there are two animations is to give enough time
+ * for the enter animation on the new element to be ready.
+ *
+ * The example above sets up a transition for both the in and out phases, but we can also target the out or
+ * in phases directly via `ng-anchor-out` and `ng-anchor-in`.
+ *
+ * ```css
+ * .banner.ng-anchor-out {
+ *   transition: 0.5s linear all;
+ *
+ *   /&#42; the scale will be applied during the out animation,
+ *          but will be animated away when the in animation runs &#42;/
+ *   transform: scale(1.2);
+ * }
+ *
+ * .banner.ng-anchor-in {
+ *   transition: 1s linear all;
+ * }
+ * ```
+ *
+ *
+ *
+ *
+ * ### Anchoring Demo
+ *
+  <example module="anchoringExample"
+           name="anchoringExample"
+           id="anchoringExample"
+           deps="angular-animate.js;angular-route.js"
+           animations="true">
+    <file name="index.html">
+      <a href="#/">Home</a>
+      <hr />
+      <div class="view-container">
+        <div ng-view class="view"></div>
+      </div>
+    </file>
+    <file name="script.js">
+      angular.module('anchoringExample', ['ngAnimate', 'ngRoute'])
+        .config(['$routeProvider', function($routeProvider) {
+          $routeProvider.when('/', {
+            templateUrl: 'home.html',
+            controller: 'HomeController as home'
+          });
+          $routeProvider.when('/profile/:id', {
+            templateUrl: 'profile.html',
+            controller: 'ProfileController as profile'
+          });
+        }])
+        .run(['$rootScope', function($rootScope) {
+          $rootScope.records = [
+            { id:1, title: "Miss Beulah Roob" },
+            { id:2, title: "Trent Morissette" },
+            { id:3, title: "Miss Ava Pouros" },
+            { id:4, title: "Rod Pouros" },
+            { id:5, title: "Abdul Rice" },
+            { id:6, title: "Laurie Rutherford Sr." },
+            { id:7, title: "Nakia McLaughlin" },
+            { id:8, title: "Jordon Blanda DVM" },
+            { id:9, title: "Rhoda Hand" },
+            { id:10, title: "Alexandrea Sauer" }
+          ];
+        }])
+        .controller('HomeController', [function() {
+          //empty
+        }])
+        .controller('ProfileController', ['$rootScope', '$routeParams', function($rootScope, $routeParams) {
+          var index = parseInt($routeParams.id, 10);
+          var record = $rootScope.records[index - 1];
+
+          this.title = record.title;
+          this.id = record.id;
+        }]);
+    </file>
+    <file name="home.html">
+      <h2>Welcome to the home page</h1>
+      <p>Please click on an element</p>
+      <a class="record"
+         ng-href="#/profile/{{ record.id }}"
+         ng-animate-ref="{{ record.id }}"
+         ng-repeat="record in records">
+        {{ record.title }}
+      </a>
+    </file>
+    <file name="profile.html">
+      <div class="profile record" ng-animate-ref="{{ profile.id }}">
+        {{ profile.title }}
+      </div>
+    </file>
+    <file name="animations.css">
+      .record {
+        display:block;
+        font-size:20px;
+      }
+      .profile {
+        background:black;
+        color:white;
+        font-size:100px;
+      }
+      .view-container {
+        position:relative;
+      }
+      .view-container > .view.ng-animate {
+        position:absolute;
+        top:0;
+        left:0;
+        width:100%;
+        min-height:500px;
+      }
+      .view.ng-enter, .view.ng-leave,
+      .record.ng-anchor {
+        transition:0.5s linear all;
+      }
+      .view.ng-enter {
+        transform:translateX(100%);
+      }
+      .view.ng-enter.ng-enter-active, .view.ng-leave {
+        transform:translateX(0%);
+      }
+      .view.ng-leave.ng-leave-active {
+        transform:translateX(-100%);
+      }
+      .record.ng-anchor-out {
+        background:red;
+      }
+    </file>
+  </example>
+ *
+ * ### How is the element transported?
+ *
+ * When an anchor animation occurs, ngAnimate will clone the starting element and position it exactly where the starting
+ * element is located on screen via absolute positioning. The cloned element will be placed inside of the root element
+ * of the application (where ng-app was defined) and all of the CSS classes of the starting element will be applied. The
+ * element will then animate into the `out` and `in` animations and will eventually reach the coordinates and match
+ * the dimensions of the destination element. During the entire animation a CSS class of `.ng-animate-shim` will be applied
+ * to both the starting and destination elements in order to hide them from being visible (the CSS styling for the class
+ * is: `visibility:hidden`). Once the anchor reaches its destination then it will be removed and the destination element
+ * will become visible since the shim class will be removed.
+ *
+ * ### How is the morphing handled?
+ *
+ * CSS Anchoring relies on transitions and keyframes and the internal code is intelligent enough to figure out
+ * what CSS classes differ between the starting element and the destination element. These different CSS classes
+ * will be added/removed on the anchor element and a transition will be applied (the transition that is provided
+ * in the anchor class). Long story short, ngAnimate will figure out what classes to add and remove which will
+ * make the transition of the element as smooth and automatic as possible. Be sure to use simple CSS classes that
+ * do not rely on DOM nesting structure so that the anchor element appears the same as the starting element (since
+ * the cloned element is placed inside of root element which is likely close to the body element).
+ *
+ * Note that if the root element is on the `<html>` element then the cloned node will be placed inside of body.
+ *
+ *
+ * ## Using $animate in your directive code
+ *
+ * So far we've explored how to feed in animations into an Angular application, but how do we trigger animations within our own directives in our application?
+ * By injecting the `$animate` service into our directive code, we can trigger structural and class-based hooks which can then be consumed by animations. Let's
+ * imagine we have a greeting box that shows and hides itself when the data changes
+ *
+ * ```html
+ * <greeting-box active="onOrOff">Hi there</greeting-box>
+ * ```
+ *
+ * ```js
+ * ngModule.directive('greetingBox', ['$animate', function($animate) {
+ *   return function(scope, element, attrs) {
+ *     attrs.$observe('active', function(value) {
+ *       value ? $animate.addClass(element, 'on') : $animate.removeClass(element, 'on');
+ *     });
+ *   });
+ * }]);
+ * ```
+ *
+ * Now the `on` CSS class is added and removed on the greeting box component. Now if we add a CSS class on top of the greeting box element
+ * in our HTML code then we can trigger a CSS or JS animation to happen.
+ *
+ * ```css
+ * /&#42; normally we would create a CSS class to reference on the element &#42;/
+ * greeting-box.on { transition:0.5s linear all; background:green; color:white; }
+ * ```
+ *
+ * The `$animate` service contains a variety of other methods like `enter`, `leave`, `animate` and `setClass`. To learn more about what's
+ * possible be sure to visit the {@link ng.$animate $animate service API page}.
+ *
+ *
+ * ### Preventing Collisions With Third Party Libraries
+ *
+ * Some third-party frameworks place animation duration defaults across many element or className
+ * selectors in order to make their code small and reuseable. This can lead to issues with ngAnimate, which
+ * is expecting actual animations on these elements and has to wait for their completion.
+ *
+ * You can prevent this unwanted behavior by using a prefix on all your animation classes:
+ *
+ * ```css
+ * /&#42; prefixed with animate- &#42;/
+ * .animate-fade-add.animate-fade-add-active {
+ *   transition:1s linear all;
+ *   opacity:0;
+ * }
+ * ```
+ *
+ * You then configure `$animate` to enforce this prefix:
+ *
+ * ```js
+ * $animateProvider.classNameFilter(/animate-/);
+ * ```
+ *
+ * This also may provide your application with a speed boost since only specific elements containing CSS class prefix
+ * will be evaluated for animation when any DOM changes occur in the application.
+ *
+ * ## Callbacks and Promises
+ *
+ * When `$animate` is called it returns a promise that can be used to capture when the animation has ended. Therefore if we were to trigger
+ * an animation (within our directive code) then we can continue performing directive and scope related activities after the animation has
+ * ended by chaining onto the returned promise that animation method returns.
+ *
+ * ```js
+ * // somewhere within the depths of the directive
+ * $animate.enter(element, parent).then(function() {
+ *   //the animation has completed
+ * });
+ * ```
+ *
+ * (Note that earlier versions of Angular prior to v1.4 required the promise code to be wrapped using `$scope.$apply(...)`. This is not the case
+ * anymore.)
+ *
+ * In addition to the animation promise, we can also make use of animation-related callbacks within our directives and controller code by registering
+ * an event listener using the `$animate` service. Let's say for example that an animation was triggered on our view
+ * routing controller to hook into that:
+ *
+ * ```js
+ * ngModule.controller('HomePageController', ['$animate', function($animate) {
+ *   $animate.on('enter', ngViewElement, function(element) {
+ *     // the animation for this route has completed
+ *   }]);
+ * }])
+ * ```
+ *
+ * (Note that you will need to trigger a digest within the callback to get angular to notice any scope-related changes.)
+ */
+
+/**
+ * @ngdoc service
+ * @name $animate
+ * @kind object
+ *
+ * @description
+ * The ngAnimate `$animate` service documentation is the same for the core `$animate` service.
+ *
+ * Click here {@link ng.$animate to learn more about animations with `$animate`}.
+ */
+angular.module('ngAnimate', [])
+  .directive('ngAnimateChildren', $$AnimateChildrenDirective)
+  .factory('$$rAFScheduler', $$rAFSchedulerFactory)
+
+  .factory('$$AnimateRunner', $$AnimateRunnerFactory)
+  .factory('$$animateAsyncRun', $$AnimateAsyncRunFactory)
+
+  .provider('$$animateQueue', $$AnimateQueueProvider)
+  .provider('$$animation', $$AnimationProvider)
+
+  .provider('$animateCss', $AnimateCssProvider)
+  .provider('$$animateCssDriver', $$AnimateCssDriverProvider)
+
+  .provider('$$animateJs', $$AnimateJsProvider)
+  .provider('$$animateJsDriver', $$AnimateJsDriverProvider);
+
+
+})(window, window.angular);
+
+},{}],2:[function(require,module,exports){
+require('./angular-animate');
+module.exports = 'ngAnimate';
+
+},{"./angular-animate":1}],3:[function(require,module,exports){
+/**
+ * @license AngularJS v1.4.8
+ * (c) 2010-2015 Google, Inc. http://angularjs.org
+ * License: MIT
+ */
+(function(window, angular, undefined) {'use strict';
+
 /**
  * @ngdoc module
  * @name ngRoute
@@ -991,11 +4927,11 @@ function ngViewFillContentFactory($compile, $controller, $route) {
 
 })(window, window.angular);
 
-},{}],2:[function(require,module,exports){
+},{}],4:[function(require,module,exports){
 require('./angular-route');
 module.exports = 'ngRoute';
 
-},{"./angular-route":1}],3:[function(require,module,exports){
+},{"./angular-route":3}],5:[function(require,module,exports){
 /**
  * @license AngularJS v1.4.8
  * (c) 2010-2015 Google, Inc. http://angularjs.org
@@ -30014,11 +33950,11 @@ $provide.value("$locale", {
 })(window, document);
 
 !window.angular.$$csp().noInlineStyle && window.angular.element(document.head).prepend('<style type="text/css">@charset "UTF-8";[ng\\:cloak],[ng-cloak],[data-ng-cloak],[x-ng-cloak],.ng-cloak,.x-ng-cloak,.ng-hide:not(.ng-hide-animate){display:none !important;}ng\\:form{display:block;}.ng-animate-shim{visibility:hidden;}.ng-anchor{position:absolute;}</style>');
-},{}],4:[function(require,module,exports){
+},{}],6:[function(require,module,exports){
 require('./angular');
 module.exports = angular;
 
-},{"./angular":3}],5:[function(require,module,exports){
+},{"./angular":5}],7:[function(require,module,exports){
 // shim for using process in browser
 
 var process = module.exports = {};
@@ -30111,7 +34047,605 @@ process.chdir = function (dir) {
 };
 process.umask = function() { return 0; };
 
-},{}],6:[function(require,module,exports){
+},{}],8:[function(require,module,exports){
+// Copyright Joyent, Inc. and other Node contributors.
+//
+// Permission is hereby granted, free of charge, to any person obtaining a
+// copy of this software and associated documentation files (the
+// "Software"), to deal in the Software without restriction, including
+// without limitation the rights to use, copy, modify, merge, publish,
+// distribute, sublicense, and/or sell copies of the Software, and to permit
+// persons to whom the Software is furnished to do so, subject to the
+// following conditions:
+//
+// The above copyright notice and this permission notice shall be included
+// in all copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+// OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+// MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN
+// NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
+// DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
+// OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
+// USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+function EventEmitter() {
+  this._events = this._events || {};
+  this._maxListeners = this._maxListeners || undefined;
+}
+module.exports = EventEmitter;
+
+// Backwards-compat with node 0.10.x
+EventEmitter.EventEmitter = EventEmitter;
+
+EventEmitter.prototype._events = undefined;
+EventEmitter.prototype._maxListeners = undefined;
+
+// By default EventEmitters will print a warning if more than 10 listeners are
+// added to it. This is a useful default which helps finding memory leaks.
+EventEmitter.defaultMaxListeners = 10;
+
+// Obviously not all Emitters should be limited to 10. This function allows
+// that to be increased. Set to zero for unlimited.
+EventEmitter.prototype.setMaxListeners = function(n) {
+  if (!isNumber(n) || n < 0 || isNaN(n))
+    throw TypeError('n must be a positive number');
+  this._maxListeners = n;
+  return this;
+};
+
+EventEmitter.prototype.emit = function(type) {
+  var er, handler, len, args, i, listeners;
+
+  if (!this._events)
+    this._events = {};
+
+  // If there is no 'error' event listener then throw.
+  if (type === 'error') {
+    if (!this._events.error ||
+        (isObject(this._events.error) && !this._events.error.length)) {
+      er = arguments[1];
+      if (er instanceof Error) {
+        throw er; // Unhandled 'error' event
+      }
+      throw TypeError('Uncaught, unspecified "error" event.');
+    }
+  }
+
+  handler = this._events[type];
+
+  if (isUndefined(handler))
+    return false;
+
+  if (isFunction(handler)) {
+    switch (arguments.length) {
+      // fast cases
+      case 1:
+        handler.call(this);
+        break;
+      case 2:
+        handler.call(this, arguments[1]);
+        break;
+      case 3:
+        handler.call(this, arguments[1], arguments[2]);
+        break;
+      // slower
+      default:
+        args = Array.prototype.slice.call(arguments, 1);
+        handler.apply(this, args);
+    }
+  } else if (isObject(handler)) {
+    args = Array.prototype.slice.call(arguments, 1);
+    listeners = handler.slice();
+    len = listeners.length;
+    for (i = 0; i < len; i++)
+      listeners[i].apply(this, args);
+  }
+
+  return true;
+};
+
+EventEmitter.prototype.addListener = function(type, listener) {
+  var m;
+
+  if (!isFunction(listener))
+    throw TypeError('listener must be a function');
+
+  if (!this._events)
+    this._events = {};
+
+  // To avoid recursion in the case that type === "newListener"! Before
+  // adding it to the listeners, first emit "newListener".
+  if (this._events.newListener)
+    this.emit('newListener', type,
+              isFunction(listener.listener) ?
+              listener.listener : listener);
+
+  if (!this._events[type])
+    // Optimize the case of one listener. Don't need the extra array object.
+    this._events[type] = listener;
+  else if (isObject(this._events[type]))
+    // If we've already got an array, just append.
+    this._events[type].push(listener);
+  else
+    // Adding the second element, need to change to array.
+    this._events[type] = [this._events[type], listener];
+
+  // Check for listener leak
+  if (isObject(this._events[type]) && !this._events[type].warned) {
+    if (!isUndefined(this._maxListeners)) {
+      m = this._maxListeners;
+    } else {
+      m = EventEmitter.defaultMaxListeners;
+    }
+
+    if (m && m > 0 && this._events[type].length > m) {
+      this._events[type].warned = true;
+      console.error('(node) warning: possible EventEmitter memory ' +
+                    'leak detected. %d listeners added. ' +
+                    'Use emitter.setMaxListeners() to increase limit.',
+                    this._events[type].length);
+      if (typeof console.trace === 'function') {
+        // not supported in IE 10
+        console.trace();
+      }
+    }
+  }
+
+  return this;
+};
+
+EventEmitter.prototype.on = EventEmitter.prototype.addListener;
+
+EventEmitter.prototype.once = function(type, listener) {
+  if (!isFunction(listener))
+    throw TypeError('listener must be a function');
+
+  var fired = false;
+
+  function g() {
+    this.removeListener(type, g);
+
+    if (!fired) {
+      fired = true;
+      listener.apply(this, arguments);
+    }
+  }
+
+  g.listener = listener;
+  this.on(type, g);
+
+  return this;
+};
+
+// emits a 'removeListener' event iff the listener was removed
+EventEmitter.prototype.removeListener = function(type, listener) {
+  var list, position, length, i;
+
+  if (!isFunction(listener))
+    throw TypeError('listener must be a function');
+
+  if (!this._events || !this._events[type])
+    return this;
+
+  list = this._events[type];
+  length = list.length;
+  position = -1;
+
+  if (list === listener ||
+      (isFunction(list.listener) && list.listener === listener)) {
+    delete this._events[type];
+    if (this._events.removeListener)
+      this.emit('removeListener', type, listener);
+
+  } else if (isObject(list)) {
+    for (i = length; i-- > 0;) {
+      if (list[i] === listener ||
+          (list[i].listener && list[i].listener === listener)) {
+        position = i;
+        break;
+      }
+    }
+
+    if (position < 0)
+      return this;
+
+    if (list.length === 1) {
+      list.length = 0;
+      delete this._events[type];
+    } else {
+      list.splice(position, 1);
+    }
+
+    if (this._events.removeListener)
+      this.emit('removeListener', type, listener);
+  }
+
+  return this;
+};
+
+EventEmitter.prototype.removeAllListeners = function(type) {
+  var key, listeners;
+
+  if (!this._events)
+    return this;
+
+  // not listening for removeListener, no need to emit
+  if (!this._events.removeListener) {
+    if (arguments.length === 0)
+      this._events = {};
+    else if (this._events[type])
+      delete this._events[type];
+    return this;
+  }
+
+  // emit removeListener for all listeners on all events
+  if (arguments.length === 0) {
+    for (key in this._events) {
+      if (key === 'removeListener') continue;
+      this.removeAllListeners(key);
+    }
+    this.removeAllListeners('removeListener');
+    this._events = {};
+    return this;
+  }
+
+  listeners = this._events[type];
+
+  if (isFunction(listeners)) {
+    this.removeListener(type, listeners);
+  } else if (listeners) {
+    // LIFO order
+    while (listeners.length)
+      this.removeListener(type, listeners[listeners.length - 1]);
+  }
+  delete this._events[type];
+
+  return this;
+};
+
+EventEmitter.prototype.listeners = function(type) {
+  var ret;
+  if (!this._events || !this._events[type])
+    ret = [];
+  else if (isFunction(this._events[type]))
+    ret = [this._events[type]];
+  else
+    ret = this._events[type].slice();
+  return ret;
+};
+
+EventEmitter.prototype.listenerCount = function(type) {
+  if (this._events) {
+    var evlistener = this._events[type];
+
+    if (isFunction(evlistener))
+      return 1;
+    else if (evlistener)
+      return evlistener.length;
+  }
+  return 0;
+};
+
+EventEmitter.listenerCount = function(emitter, type) {
+  return emitter.listenerCount(type);
+};
+
+function isFunction(arg) {
+  return typeof arg === 'function';
+}
+
+function isNumber(arg) {
+  return typeof arg === 'number';
+}
+
+function isObject(arg) {
+  return typeof arg === 'object' && arg !== null;
+}
+
+function isUndefined(arg) {
+  return arg === void 0;
+}
+
+},{}],9:[function(require,module,exports){
+/**
+ * Copyright (c) 2014-2015, Facebook, Inc.
+ * All rights reserved.
+ *
+ * This source code is licensed under the BSD-style license found in the
+ * LICENSE file in the root directory of this source tree. An additional grant
+ * of patent rights can be found in the PATENTS file in the same directory.
+ */
+
+module.exports.Dispatcher = require('./lib/Dispatcher');
+
+},{"./lib/Dispatcher":10}],10:[function(require,module,exports){
+(function (process){
+/**
+ * Copyright (c) 2014-2015, Facebook, Inc.
+ * All rights reserved.
+ *
+ * This source code is licensed under the BSD-style license found in the
+ * LICENSE file in the root directory of this source tree. An additional grant
+ * of patent rights can be found in the PATENTS file in the same directory.
+ *
+ * @providesModule Dispatcher
+ * 
+ * @preventMunge
+ */
+
+'use strict';
+
+exports.__esModule = true;
+
+function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError('Cannot call a class as a function'); } }
+
+var invariant = require('fbjs/lib/invariant');
+
+var _prefix = 'ID_';
+
+/**
+ * Dispatcher is used to broadcast payloads to registered callbacks. This is
+ * different from generic pub-sub systems in two ways:
+ *
+ *   1) Callbacks are not subscribed to particular events. Every payload is
+ *      dispatched to every registered callback.
+ *   2) Callbacks can be deferred in whole or part until other callbacks have
+ *      been executed.
+ *
+ * For example, consider this hypothetical flight destination form, which
+ * selects a default city when a country is selected:
+ *
+ *   var flightDispatcher = new Dispatcher();
+ *
+ *   // Keeps track of which country is selected
+ *   var CountryStore = {country: null};
+ *
+ *   // Keeps track of which city is selected
+ *   var CityStore = {city: null};
+ *
+ *   // Keeps track of the base flight price of the selected city
+ *   var FlightPriceStore = {price: null}
+ *
+ * When a user changes the selected city, we dispatch the payload:
+ *
+ *   flightDispatcher.dispatch({
+ *     actionType: 'city-update',
+ *     selectedCity: 'paris'
+ *   });
+ *
+ * This payload is digested by `CityStore`:
+ *
+ *   flightDispatcher.register(function(payload) {
+ *     if (payload.actionType === 'city-update') {
+ *       CityStore.city = payload.selectedCity;
+ *     }
+ *   });
+ *
+ * When the user selects a country, we dispatch the payload:
+ *
+ *   flightDispatcher.dispatch({
+ *     actionType: 'country-update',
+ *     selectedCountry: 'australia'
+ *   });
+ *
+ * This payload is digested by both stores:
+ *
+ *   CountryStore.dispatchToken = flightDispatcher.register(function(payload) {
+ *     if (payload.actionType === 'country-update') {
+ *       CountryStore.country = payload.selectedCountry;
+ *     }
+ *   });
+ *
+ * When the callback to update `CountryStore` is registered, we save a reference
+ * to the returned token. Using this token with `waitFor()`, we can guarantee
+ * that `CountryStore` is updated before the callback that updates `CityStore`
+ * needs to query its data.
+ *
+ *   CityStore.dispatchToken = flightDispatcher.register(function(payload) {
+ *     if (payload.actionType === 'country-update') {
+ *       // `CountryStore.country` may not be updated.
+ *       flightDispatcher.waitFor([CountryStore.dispatchToken]);
+ *       // `CountryStore.country` is now guaranteed to be updated.
+ *
+ *       // Select the default city for the new country
+ *       CityStore.city = getDefaultCityForCountry(CountryStore.country);
+ *     }
+ *   });
+ *
+ * The usage of `waitFor()` can be chained, for example:
+ *
+ *   FlightPriceStore.dispatchToken =
+ *     flightDispatcher.register(function(payload) {
+ *       switch (payload.actionType) {
+ *         case 'country-update':
+ *         case 'city-update':
+ *           flightDispatcher.waitFor([CityStore.dispatchToken]);
+ *           FlightPriceStore.price =
+ *             getFlightPriceStore(CountryStore.country, CityStore.city);
+ *           break;
+ *     }
+ *   });
+ *
+ * The `country-update` payload will be guaranteed to invoke the stores'
+ * registered callbacks in order: `CountryStore`, `CityStore`, then
+ * `FlightPriceStore`.
+ */
+
+var Dispatcher = (function () {
+  function Dispatcher() {
+    _classCallCheck(this, Dispatcher);
+
+    this._callbacks = {};
+    this._isDispatching = false;
+    this._isHandled = {};
+    this._isPending = {};
+    this._lastID = 1;
+  }
+
+  /**
+   * Registers a callback to be invoked with every dispatched payload. Returns
+   * a token that can be used with `waitFor()`.
+   */
+
+  Dispatcher.prototype.register = function register(callback) {
+    var id = _prefix + this._lastID++;
+    this._callbacks[id] = callback;
+    return id;
+  };
+
+  /**
+   * Removes a callback based on its token.
+   */
+
+  Dispatcher.prototype.unregister = function unregister(id) {
+    !this._callbacks[id] ? process.env.NODE_ENV !== 'production' ? invariant(false, 'Dispatcher.unregister(...): `%s` does not map to a registered callback.', id) : invariant(false) : undefined;
+    delete this._callbacks[id];
+  };
+
+  /**
+   * Waits for the callbacks specified to be invoked before continuing execution
+   * of the current callback. This method should only be used by a callback in
+   * response to a dispatched payload.
+   */
+
+  Dispatcher.prototype.waitFor = function waitFor(ids) {
+    !this._isDispatching ? process.env.NODE_ENV !== 'production' ? invariant(false, 'Dispatcher.waitFor(...): Must be invoked while dispatching.') : invariant(false) : undefined;
+    for (var ii = 0; ii < ids.length; ii++) {
+      var id = ids[ii];
+      if (this._isPending[id]) {
+        !this._isHandled[id] ? process.env.NODE_ENV !== 'production' ? invariant(false, 'Dispatcher.waitFor(...): Circular dependency detected while ' + 'waiting for `%s`.', id) : invariant(false) : undefined;
+        continue;
+      }
+      !this._callbacks[id] ? process.env.NODE_ENV !== 'production' ? invariant(false, 'Dispatcher.waitFor(...): `%s` does not map to a registered callback.', id) : invariant(false) : undefined;
+      this._invokeCallback(id);
+    }
+  };
+
+  /**
+   * Dispatches a payload to all registered callbacks.
+   */
+
+  Dispatcher.prototype.dispatch = function dispatch(payload) {
+    !!this._isDispatching ? process.env.NODE_ENV !== 'production' ? invariant(false, 'Dispatch.dispatch(...): Cannot dispatch in the middle of a dispatch.') : invariant(false) : undefined;
+    this._startDispatching(payload);
+    try {
+      for (var id in this._callbacks) {
+        if (this._isPending[id]) {
+          continue;
+        }
+        this._invokeCallback(id);
+      }
+    } finally {
+      this._stopDispatching();
+    }
+  };
+
+  /**
+   * Is this Dispatcher currently dispatching.
+   */
+
+  Dispatcher.prototype.isDispatching = function isDispatching() {
+    return this._isDispatching;
+  };
+
+  /**
+   * Call the callback stored with the given id. Also do some internal
+   * bookkeeping.
+   *
+   * @internal
+   */
+
+  Dispatcher.prototype._invokeCallback = function _invokeCallback(id) {
+    this._isPending[id] = true;
+    this._callbacks[id](this._pendingPayload);
+    this._isHandled[id] = true;
+  };
+
+  /**
+   * Set up bookkeeping needed when dispatching.
+   *
+   * @internal
+   */
+
+  Dispatcher.prototype._startDispatching = function _startDispatching(payload) {
+    for (var id in this._callbacks) {
+      this._isPending[id] = false;
+      this._isHandled[id] = false;
+    }
+    this._pendingPayload = payload;
+    this._isDispatching = true;
+  };
+
+  /**
+   * Clear bookkeeping used for dispatching.
+   *
+   * @internal
+   */
+
+  Dispatcher.prototype._stopDispatching = function _stopDispatching() {
+    delete this._pendingPayload;
+    this._isDispatching = false;
+  };
+
+  return Dispatcher;
+})();
+
+module.exports = Dispatcher;
+}).call(this,require('_process'))
+},{"_process":7,"fbjs/lib/invariant":11}],11:[function(require,module,exports){
+(function (process){
+/**
+ * Copyright 2013-2015, Facebook, Inc.
+ * All rights reserved.
+ *
+ * This source code is licensed under the BSD-style license found in the
+ * LICENSE file in the root directory of this source tree. An additional grant
+ * of patent rights can be found in the PATENTS file in the same directory.
+ *
+ * @providesModule invariant
+ */
+
+"use strict";
+
+/**
+ * Use invariant() to assert state which your program assumes to be true.
+ *
+ * Provide sprintf-style format (only %s is supported) and arguments
+ * to provide information about what broke and what you were
+ * expecting.
+ *
+ * The invariant message will be stripped in production, but the invariant
+ * will remain to ensure logic does not differ in production.
+ */
+
+var invariant = function (condition, format, a, b, c, d, e, f) {
+  if (process.env.NODE_ENV !== 'production') {
+    if (format === undefined) {
+      throw new Error('invariant requires an error message argument');
+    }
+  }
+
+  if (!condition) {
+    var error;
+    if (format === undefined) {
+      error = new Error('Minified exception occurred; use the non-minified dev environment ' + 'for the full error message and additional helpful warnings.');
+    } else {
+      var args = [a, b, c, d, e, f];
+      var argIndex = 0;
+      error = new Error('Invariant Violation: ' + format.replace(/%s/g, function () {
+        return args[argIndex++];
+      }));
+    }
+
+    error.framesToPop = 1; // we don't care about invariant's own frame
+    throw error;
+  }
+};
+
+module.exports = invariant;
+}).call(this,require('_process'))
+},{"_process":7}],12:[function(require,module,exports){
 // # ngReact
 // ### Use React Components inside of your Angular applications
 //
@@ -30360,12 +34894,677 @@ process.umask = function() { return 0; };
     .factory('reactDirective', ['$timeout','$injector', reactDirective]);
 }));
 
-},{"angular":4,"react":163,"react-dom":7}],7:[function(require,module,exports){
+},{"angular":6,"react":170,"react-dom":13}],13:[function(require,module,exports){
 'use strict';
 
 module.exports = require('react/lib/ReactDOM');
 
-},{"react/lib/ReactDOM":42}],8:[function(require,module,exports){
+},{"react/lib/ReactDOM":49}],14:[function(require,module,exports){
+// https://github.com/sanniassin/react-input-mask
+
+"use strict";
+
+var _extends = Object.assign || function (target) { for (var i = 1; i < arguments.length; i++) { var source = arguments[i]; for (var key in source) { if (Object.prototype.hasOwnProperty.call(source, key)) { target[key] = source[key]; } } } return target; };
+
+var React = require("react");
+
+var InputElement = React.createClass({
+    displayName: "InputElement",
+
+    charsRules: {
+        "9": "[0-9]",
+        "a": "[A-Za-z]",
+        "*": "[A-Za-z0-9]"
+    },
+    defaultMaskChar: "_",
+    lastCaretPos: null,
+    isAndroidBrowser: function () {
+        var windows = new RegExp("windows", "i");
+        var firefox = new RegExp("firefox", "i");
+        var android = new RegExp("android", "i");
+        var ua = navigator.userAgent;
+        return !windows.test(ua) && !firefox.test(ua) && android.test(ua);
+    },
+    isDOMElement: function (element) {
+        return typeof HTMLElement === "object" ? element instanceof HTMLElement // DOM2
+        : element.nodeType === 1 && typeof element.nodeName === "string";
+    },
+    // getDOMNode is deprecated but we need it to stay compatible with React 0.12
+    getInputDOMNode: function () {
+        var input = this.refs.input;
+
+        if (!input) {
+            return null;
+        }
+
+        // React 0.14
+        if (this.isDOMElement(input)) {
+            return input;
+        }
+
+        return input.getDOMNode();
+    },
+    getPrefix: function () {
+        var prefix = "";
+        var mask = this.mask;
+
+        for (var i = 0; i < mask.length && this.isPermanentChar(i); ++i) {
+            prefix += mask[i];
+        }
+        return prefix;
+    },
+    getFilledLength: function () {
+        var value = arguments.length <= 0 || arguments[0] === undefined ? this.state.value : arguments[0];
+
+        var i;
+        var maskChar = this.maskChar;
+
+        if (!maskChar) {
+            return value.length;
+        }
+
+        for (i = value.length - 1; i >= 0; --i) {
+            var char = value[i];
+            if (!this.isPermanentChar(i) && this.isAllowedChar(char, i)) {
+                break;
+            }
+        }
+
+        return ++i || this.getPrefix().length;
+    },
+    getLeftEditablePos: function (pos) {
+        for (var i = pos; i >= 0; --i) {
+            if (!this.isPermanentChar(i)) {
+                return i;
+            }
+        }
+        return null;
+    },
+    getRightEditablePos: function (pos) {
+        var mask = this.mask;
+
+        for (var i = pos; i < mask.length; ++i) {
+            if (!this.isPermanentChar(i)) {
+                return i;
+            }
+        }
+        return null;
+    },
+    isEmpty: function () {
+        var _this = this;
+
+        var value = arguments.length <= 0 || arguments[0] === undefined ? this.state.value : arguments[0];
+
+        return !value.split("").some(function (char, i) {
+            return !_this.isPermanentChar(i) && _this.isAllowedChar(char, i);
+        });
+    },
+    isFilled: function () {
+        var value = arguments.length <= 0 || arguments[0] === undefined ? this.state.value : arguments[0];
+
+        return this.getFilledLength(value) === this.mask.length;
+    },
+    createFilledArray: function (length, val) {
+        var array = [];
+        for (var i = 0; i < length; i++) {
+            array[i] = val;
+        }
+        return array;
+    },
+    formatValue: function (value) {
+        var _this2 = this;
+
+        var maskChar = this.maskChar;
+        var mask = this.mask;
+
+        if (!maskChar) {
+            var prefix = this.getPrefix();
+            var prefixLen = prefix.length;
+            value = this.insertRawSubstr("", value, 0);
+            while (value.length > prefixLen && this.isPermanentChar(value.length - 1)) {
+                value = value.slice(0, value.length - 1);
+            }
+
+            if (value.length < prefixLen) {
+                value = prefix;
+            }
+
+            return value;
+        }
+        if (value) {
+            var emptyValue = this.formatValue("");
+            return this.insertRawSubstr(emptyValue, value, 0);
+        }
+        return value.split("").concat(this.createFilledArray(mask.length - value.length, null)).map(function (char, pos) {
+            if (_this2.isAllowedChar(char, pos)) {
+                return char;
+            } else if (_this2.isPermanentChar(pos)) {
+                return mask[pos];
+            }
+            return maskChar;
+        }).join("");
+    },
+    clearRange: function (value, start, len) {
+        var _this3 = this;
+
+        var end = start + len;
+        var maskChar = this.maskChar;
+        var mask = this.mask;
+
+        if (!maskChar) {
+            var prefixLen = this.getPrefix().length;
+            value = value.split("").filter(function (char, i) {
+                return i < prefixLen || i < start || i >= end;
+            }).join("");
+            return this.formatValue(value);
+        }
+        return value.split("").map(function (char, i) {
+            if (i < start || i >= end) {
+                return char;
+            }
+            if (_this3.isPermanentChar(i)) {
+                return mask[i];
+            }
+            return maskChar;
+        }).join("");
+    },
+    replaceSubstr: function (value, newSubstr, pos) {
+        return value.slice(0, pos) + newSubstr + value.slice(pos + newSubstr.length);
+    },
+    insertRawSubstr: function (value, substr, pos) {
+        var mask = this.mask;
+        var maskChar = this.maskChar;
+
+        var isFilled = this.isFilled(value);
+        var prefixLen = this.getPrefix().length;
+        substr = substr.split("");
+
+        if (!maskChar && pos > value.length) {
+            value += mask.slice(value.length, pos);
+        }
+
+        for (var i = pos; i < mask.length && substr.length;) {
+            if (!this.isPermanentChar(i) || mask[i] === substr[0]) {
+                var char = substr.shift();
+                if (this.isAllowedChar(char, i, true)) {
+                    if (i < value.length) {
+                        if (maskChar || isFilled || i < prefixLen) {
+                            value = this.replaceSubstr(value, char, i);
+                        } else {
+                            value = this.formatValue(value.substr(0, i) + char + value.substr(i));
+                        }
+                    } else if (!maskChar) {
+                        value += char;
+                    }
+                    ++i;
+                }
+            } else {
+                if (!maskChar && i >= value.length) {
+                    value += mask[i];
+                }
+                ++i;
+            }
+        }
+        return value;
+    },
+    getRawSubstrLength: function (value, substr, pos) {
+        var mask = this.mask;
+        var maskChar = this.maskChar;
+
+        substr = substr.split("");
+        for (var i = pos; i < mask.length && substr.length;) {
+            if (!this.isPermanentChar(i) || mask[i] === substr[0]) {
+                var char = substr.shift();
+                if (this.isAllowedChar(char, i, true)) {
+                    ++i;
+                }
+            } else {
+                ++i;
+            }
+        }
+        return i - pos;
+    },
+    isAllowedChar: function (char, pos) {
+        var allowMaskChar = arguments.length <= 2 || arguments[2] === undefined ? false : arguments[2];
+        var mask = this.mask;
+        var maskChar = this.maskChar;
+
+        if (this.isPermanentChar(pos)) {
+            return mask[pos] === char;
+        }
+        var ruleChar = mask[pos];
+        var charRule = this.charsRules[ruleChar];
+        return new RegExp(charRule).test(char || "") || allowMaskChar && char === maskChar;
+    },
+    isPermanentChar: function (pos) {
+        return this.permanents.indexOf(pos) !== -1;
+    },
+    setCaretToEnd: function () {
+        var filledLen = this.getFilledLength();
+        var pos = this.getRightEditablePos(filledLen);
+        if (pos !== null) {
+            this.setCaretPos(pos);
+        }
+    },
+    setSelection: function (start) {
+        var len = arguments.length <= 1 || arguments[1] === undefined ? 0 : arguments[1];
+
+        var input = this.getInputDOMNode();
+        if (!input) {
+            return;
+        }
+
+        var end = start + len;
+        if ("selectionStart" in input && "selectionEnd" in input) {
+            input.selectionStart = start;
+            input.selectionEnd = end;
+        } else {
+            var range = input.createTextRange();
+            range.collapse(true);
+            range.moveStart("character", start);
+            range.moveEnd("character", end - start);
+            range.select();
+        }
+    },
+    getSelection: function () {
+        var input = this.getInputDOMNode();
+        var start = 0;
+        var end = 0;
+
+        if ("selectionStart" in input && "selectionEnd" in input) {
+            start = input.selectionStart;
+            end = input.selectionEnd;
+        } else {
+            var range = document.selection.createRange();
+            if (range.parentElement() === input) {
+                start = -range.moveStart("character", -input.value.length);
+                end = -range.moveEnd("character", -input.value.length);
+            }
+        }
+
+        return {
+            start: start,
+            end: end,
+            length: end - start
+        };
+    },
+    getCaretPos: function () {
+        return this.getSelection().start;
+    },
+    setCaretPos: function (pos) {
+        var raf = window.requestAnimationFrame || window.webkitRequestAnimationFrame || window.mozRequestAnimationFrame || function (fn) {
+            setTimeout(fn, 0);
+        };
+
+        var setPos = this.setSelection.bind(this, pos, 0);
+
+        setPos();
+        raf(setPos);
+
+        this.lastCaretPos = pos;
+    },
+    isFocused: function () {
+        return document.activeElement === this.getInputDOMNode();
+    },
+    parseMask: function (mask) {
+        var _this4 = this;
+
+        if (typeof mask !== "string") {
+            return {
+                mask: null,
+                permanents: []
+            };
+        }
+        var str = "";
+        var permanents = [];
+        var isPermanent = false;
+
+        mask.split("").forEach(function (char) {
+            if (!isPermanent && char === "\\") {
+                isPermanent = true;
+            } else {
+                if (isPermanent || !_this4.charsRules[char]) {
+                    permanents.push(str.length);
+                }
+                str += char;
+                isPermanent = false;
+            }
+        });
+
+        return {
+            mask: str,
+            permanents: permanents
+        };
+    },
+    getStringValue: function (value) {
+        return !value && value !== 0 ? "" : value + "";
+    },
+    getInitialState: function () {
+        var mask = this.parseMask(this.props.mask);
+        var defaultValue = this.props.defaultValue != null ? this.props.defaultValue : null;
+        var value = this.props.value != null ? this.props.value : defaultValue;
+
+        value = this.getStringValue(value);
+
+        this.mask = mask.mask;
+        this.permanents = mask.permanents, this.maskChar = "maskChar" in this.props ? this.props.maskChar : this.defaultMaskChar;
+
+        if (this.props.alwaysShowMask || value) {
+            value = this.formatValue(value);
+        }
+
+        return { value: value };
+    },
+    componentWillMount: function () {
+        var mask = this.mask;
+        var value = this.state.value;
+
+        if (mask && value) {
+            this.setState({ value: value });
+        }
+    },
+    componentWillReceiveProps: function (nextProps) {
+        var mask = this.parseMask(nextProps.mask);
+        var isMaskChanged = mask.mask && mask.mask !== this.mask;
+
+        this.mask = mask.mask;
+        this.permanents = mask.permanents, this.maskChar = "maskChar" in nextProps ? nextProps.maskChar : this.defaultMaskChar;
+
+        var newValue = nextProps.value !== undefined ? this.getStringValue(nextProps.value) : this.state.value;
+
+        var showEmpty = nextProps.alwaysShowMask || this.isFocused();
+        if (isMaskChanged || mask.mask && (newValue || showEmpty)) {
+            newValue = this.formatValue(newValue);
+
+            if (isMaskChanged) {
+                var pos = this.lastCaretPos;
+                var filledLen = this.getFilledLength(newValue);
+                if (filledLen < pos) {
+                    this.setCaretPos(this.getRightEditablePos(filledLen));
+                }
+            }
+        }
+        if (mask.mask && this.isEmpty(newValue) && !showEmpty) {
+            newValue = "";
+        }
+        if (this.state.value !== newValue) {
+            this.setState({ value: newValue });
+        }
+    },
+    onKeyDown: function (event) {
+        var hasHandler = typeof this.props.onKeyDown === "function";
+        if (event.ctrlKey || event.metaKey) {
+            if (hasHandler) {
+                this.props.onKeyDown(event);
+            }
+            return;
+        }
+
+        var caretPos = this.getCaretPos();
+        var value = this.state.value;
+        var key = event.key;
+        var preventDefault = false;
+        switch (key) {
+            case "Backspace":
+            case "Delete":
+                var prefixLen = this.getPrefix().length;
+                var deleteFromRight = key === "Delete";
+                var selectionRange = this.getSelection();
+                if (selectionRange.length) {
+                    value = this.clearRange(value, selectionRange.start, selectionRange.length);
+                } else if (caretPos < prefixLen || !deleteFromRight && caretPos === prefixLen) {
+                    caretPos = prefixLen;
+                } else {
+                    var editablePos = deleteFromRight ? this.getRightEditablePos(caretPos) : this.getLeftEditablePos(caretPos - 1);
+                    if (editablePos !== null) {
+                        value = this.clearRange(value, editablePos, 1);
+                        caretPos = editablePos;
+                    }
+                }
+                preventDefault = true;
+                break;
+            default:
+                break;
+        }
+
+        if (hasHandler) {
+            this.props.onKeyDown(event);
+        }
+
+        if (value !== this.state.value) {
+            event.target.value = value;
+            this.setState({
+                value: value
+            });
+            preventDefault = true;
+            if (typeof this.props.onChange === "function") {
+                this.props.onChange(event);
+            }
+        }
+        if (preventDefault) {
+            event.preventDefault();
+            this.setCaretPos(caretPos);
+        }
+    },
+    onKeyPress: function (event) {
+        var key = event.key;
+        var hasHandler = typeof this.props.onKeyPress === "function";
+        if (key === "Enter" || event.ctrlKey || event.metaKey) {
+            if (hasHandler) {
+                this.props.onKeyPress(event);
+            }
+            return;
+        }
+
+        var caretPos = this.getCaretPos();
+        var selection = this.getSelection();
+        var value = this.state.value;
+        var mask = this.mask;
+        var maskChar = this.maskChar;
+
+        var maskLen = mask.length;
+        var prefixLen = this.getPrefix().length;
+
+        if (this.isPermanentChar(caretPos) && mask[caretPos] === key) {
+            value = this.insertRawSubstr(value, key, caretPos);
+            ++caretPos;
+        } else {
+            var editablePos = this.getRightEditablePos(caretPos);
+            if (editablePos !== null && this.isAllowedChar(key, editablePos)) {
+                value = this.clearRange(value, selection.start, selection.length);
+                value = this.insertRawSubstr(value, key, editablePos);
+                caretPos = editablePos + 1;
+            }
+        }
+
+        if (value !== this.state.value) {
+            event.target.value = value;
+            this.setState({
+                value: value
+            });
+            if (typeof this.props.onChange === "function") {
+                this.props.onChange(event);
+            }
+        }
+        event.preventDefault();
+        if (caretPos < maskLen && caretPos > prefixLen) {
+            caretPos = this.getRightEditablePos(caretPos);
+        }
+        this.setCaretPos(caretPos);
+    },
+    onChange: function (event) {
+        var pasteSelection = this.pasteSelection;
+        var mask = this.mask;
+        var maskChar = this.maskChar;
+
+        var target = event.target;
+        var value = target.value;
+        var oldValue = this.state.value;
+        if (pasteSelection) {
+            this.pasteSelection = null;
+            this.pasteText(oldValue, value, pasteSelection, event);
+            return;
+        }
+        var selection = this.getSelection();
+        var caretPos = selection.end;
+        var maskLen = mask.length;
+        var valueLen = value.length;
+        var oldValueLen = oldValue.length;
+        var prefixLen = this.getPrefix().length;
+
+        if (valueLen > oldValueLen) {
+            var substrLen = valueLen - oldValueLen;
+            var startPos = selection.end - substrLen;
+            var enteredSubstr = value.substr(startPos, substrLen);
+
+            if (startPos < maskLen && (substrLen !== 1 || enteredSubstr !== mask[startPos])) {
+                caretPos = this.getRightEditablePos(startPos);
+            } else {
+                caretPos = startPos;
+            }
+
+            value = value.substr(0, startPos) + value.substr(startPos + substrLen);
+
+            var clearedValue = this.clearRange(value, startPos, maskLen - startPos);
+            clearedValue = this.insertRawSubstr(clearedValue, enteredSubstr, caretPos);
+
+            value = this.insertRawSubstr(oldValue, enteredSubstr, caretPos);
+
+            if (substrLen !== 1 || caretPos >= prefixLen && caretPos < maskLen) {
+                caretPos = this.getFilledLength(clearedValue);
+            } else if (caretPos < maskLen) {
+                caretPos++;
+            }
+        } else if (valueLen < oldValueLen) {
+            var removedLen = maskLen - valueLen;
+            var clearedValue = this.clearRange(oldValue, selection.end, removedLen);
+            var substr = value.substr(0, selection.end);
+            var clearOnly = substr === oldValue.substr(0, selection.end);
+
+            if (maskChar) {
+                value = this.insertRawSubstr(clearedValue, substr, 0);
+            }
+
+            clearedValue = this.clearRange(clearedValue, selection.end, maskLen - selection.end);
+            clearedValue = this.insertRawSubstr(clearedValue, substr, 0);
+
+            if (!clearOnly) {
+                caretPos = this.getFilledLength(clearedValue);
+            } else if (caretPos < prefixLen) {
+                caretPos = prefixLen;
+            }
+        }
+        var value = this.formatValue(value);
+
+        // prevent android autocomplete insertion on backspace
+        if (!this.isAndroidBrowser()) {
+            target.value = value;
+        }
+
+        this.setState({
+            value: value
+        });
+
+        this.setCaretPos(caretPos);
+
+        if (typeof this.props.onChange === "function") {
+            this.props.onChange(event);
+        }
+    },
+    onFocus: function (event) {
+        if (!this.state.value) {
+            var prefix = this.getPrefix();
+            var value = this.formatValue(prefix);
+            event.target.value = this.formatValue(value);
+            this.setState({
+                value: value
+            }, this.setCaretToEnd);
+
+            if (typeof this.props.onChange === "function") {
+                this.props.onChange(event);
+            }
+        } else if (this.getFilledLength() < this.mask.length) {
+            this.setCaretToEnd();
+        }
+
+        if (typeof this.props.onFocus === "function") {
+            this.props.onFocus(event);
+        }
+    },
+    onBlur: function (event) {
+        if (!this.props.alwaysShowMask && this.isEmpty(this.state.value)) {
+            event.target.value = "";
+            this.setState({
+                value: ""
+            });
+            if (typeof this.props.onChange === "function") {
+                this.props.onChange(event);
+            }
+        }
+
+        if (typeof this.props.onBlur === "function") {
+            this.props.onBlur(event);
+        }
+    },
+    onPaste: function (event) {
+        if (this.isAndroidBrowser()) {
+            this.pasteSelection = this.getSelection();
+            event.target.value = "";
+            return;
+        }
+        var text;
+        if (window.clipboardData && window.clipboardData.getData) {
+            // IE
+            text = window.clipboardData.getData("Text");
+        } else if (event.clipboardData && event.clipboardData.getData) {
+            text = event.clipboardData.getData("text/plain");
+        }
+        if (text) {
+            var value = this.state.value;
+            var selection = this.getSelection();
+            this.pasteText(value, text, selection, event);
+        }
+        event.preventDefault();
+    },
+    pasteText: function (value, text, selection, event) {
+        var caretPos = selection.start;
+        if (selection.length) {
+            value = this.clearRange(value, caretPos, selection.length);
+        }
+        var textLen = this.getRawSubstrLength(value, text, caretPos);
+        var value = this.insertRawSubstr(value, text, caretPos);
+        caretPos += textLen;
+        caretPos = this.getRightEditablePos(caretPos) || caretPos;
+        if (value !== this.getInputDOMNode().value) {
+            if (event) {
+                event.target.value = value;
+            }
+            this.setState({
+                value: value
+            });
+            if (event && typeof this.props.onChange === "function") {
+                this.props.onChange(event);
+            }
+        }
+        this.setCaretPos(caretPos);
+    },
+    render: function () {
+        var _this5 = this;
+
+        var ourProps = {};
+        if (this.mask) {
+            var handlersKeys = ["onFocus", "onBlur", "onChange", "onKeyDown", "onKeyPress", "onPaste"];
+            handlersKeys.forEach(function (key) {
+                ourProps[key] = _this5[key];
+            });
+            ourProps.value = this.state.value;
+        }
+        return React.createElement("input", _extends({ ref: "input" }, this.props, ourProps));
+    }
+});
+
+module.exports = InputElement;
+},{"react":170}],15:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -30402,7 +35601,7 @@ var AutoFocusUtils = {
 };
 
 module.exports = AutoFocusUtils;
-},{"./ReactMount":72,"./findDOMNode":115,"fbjs/lib/focusNode":145}],9:[function(require,module,exports){
+},{"./ReactMount":79,"./findDOMNode":122,"fbjs/lib/focusNode":152}],16:[function(require,module,exports){
 /**
  * Copyright 2013-2015 Facebook, Inc.
  * All rights reserved.
@@ -30808,7 +36007,7 @@ var BeforeInputEventPlugin = {
 };
 
 module.exports = BeforeInputEventPlugin;
-},{"./EventConstants":21,"./EventPropagators":25,"./FallbackCompositionState":26,"./SyntheticCompositionEvent":97,"./SyntheticInputEvent":101,"fbjs/lib/ExecutionEnvironment":137,"fbjs/lib/keyOf":155}],10:[function(require,module,exports){
+},{"./EventConstants":28,"./EventPropagators":32,"./FallbackCompositionState":33,"./SyntheticCompositionEvent":104,"./SyntheticInputEvent":108,"fbjs/lib/ExecutionEnvironment":144,"fbjs/lib/keyOf":162}],17:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -30948,7 +36147,7 @@ var CSSProperty = {
 };
 
 module.exports = CSSProperty;
-},{}],11:[function(require,module,exports){
+},{}],18:[function(require,module,exports){
 (function (process){
 /**
  * Copyright 2013-2015, Facebook, Inc.
@@ -31126,7 +36325,7 @@ ReactPerf.measureMethods(CSSPropertyOperations, 'CSSPropertyOperations', {
 
 module.exports = CSSPropertyOperations;
 }).call(this,require('_process'))
-},{"./CSSProperty":10,"./ReactPerf":78,"./dangerousStyleValue":112,"_process":5,"fbjs/lib/ExecutionEnvironment":137,"fbjs/lib/camelizeStyleName":139,"fbjs/lib/hyphenateStyleName":150,"fbjs/lib/memoizeStringOnly":157,"fbjs/lib/warning":162}],12:[function(require,module,exports){
+},{"./CSSProperty":17,"./ReactPerf":85,"./dangerousStyleValue":119,"_process":7,"fbjs/lib/ExecutionEnvironment":144,"fbjs/lib/camelizeStyleName":146,"fbjs/lib/hyphenateStyleName":157,"fbjs/lib/memoizeStringOnly":164,"fbjs/lib/warning":169}],19:[function(require,module,exports){
 (function (process){
 /**
  * Copyright 2013-2015, Facebook, Inc.
@@ -31222,7 +36421,7 @@ PooledClass.addPoolingTo(CallbackQueue);
 
 module.exports = CallbackQueue;
 }).call(this,require('_process'))
-},{"./Object.assign":29,"./PooledClass":30,"_process":5,"fbjs/lib/invariant":151}],13:[function(require,module,exports){
+},{"./Object.assign":36,"./PooledClass":37,"_process":7,"fbjs/lib/invariant":158}],20:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -31544,7 +36743,7 @@ var ChangeEventPlugin = {
 };
 
 module.exports = ChangeEventPlugin;
-},{"./EventConstants":21,"./EventPluginHub":22,"./EventPropagators":25,"./ReactUpdates":90,"./SyntheticEvent":99,"./getEventTarget":121,"./isEventSupported":126,"./isTextInputElement":127,"fbjs/lib/ExecutionEnvironment":137,"fbjs/lib/keyOf":155}],14:[function(require,module,exports){
+},{"./EventConstants":28,"./EventPluginHub":29,"./EventPropagators":32,"./ReactUpdates":97,"./SyntheticEvent":106,"./getEventTarget":128,"./isEventSupported":133,"./isTextInputElement":134,"fbjs/lib/ExecutionEnvironment":144,"fbjs/lib/keyOf":162}],21:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -31568,7 +36767,7 @@ var ClientReactRootIndex = {
 };
 
 module.exports = ClientReactRootIndex;
-},{}],15:[function(require,module,exports){
+},{}],22:[function(require,module,exports){
 (function (process){
 /**
  * Copyright 2013-2015, Facebook, Inc.
@@ -31700,7 +36899,7 @@ ReactPerf.measureMethods(DOMChildrenOperations, 'DOMChildrenOperations', {
 
 module.exports = DOMChildrenOperations;
 }).call(this,require('_process'))
-},{"./Danger":18,"./ReactMultiChildUpdateTypes":74,"./ReactPerf":78,"./setInnerHTML":131,"./setTextContent":132,"_process":5,"fbjs/lib/invariant":151}],16:[function(require,module,exports){
+},{"./Danger":25,"./ReactMultiChildUpdateTypes":81,"./ReactPerf":85,"./setInnerHTML":138,"./setTextContent":139,"_process":7,"fbjs/lib/invariant":158}],23:[function(require,module,exports){
 (function (process){
 /**
  * Copyright 2013-2015, Facebook, Inc.
@@ -31937,7 +37136,7 @@ var DOMProperty = {
 
 module.exports = DOMProperty;
 }).call(this,require('_process'))
-},{"_process":5,"fbjs/lib/invariant":151}],17:[function(require,module,exports){
+},{"_process":7,"fbjs/lib/invariant":158}],24:[function(require,module,exports){
 (function (process){
 /**
  * Copyright 2013-2015, Facebook, Inc.
@@ -32165,7 +37364,7 @@ ReactPerf.measureMethods(DOMPropertyOperations, 'DOMPropertyOperations', {
 
 module.exports = DOMPropertyOperations;
 }).call(this,require('_process'))
-},{"./DOMProperty":16,"./ReactPerf":78,"./quoteAttributeValueForBrowser":129,"_process":5,"fbjs/lib/warning":162}],18:[function(require,module,exports){
+},{"./DOMProperty":23,"./ReactPerf":85,"./quoteAttributeValueForBrowser":136,"_process":7,"fbjs/lib/warning":169}],25:[function(require,module,exports){
 (function (process){
 /**
  * Copyright 2013-2015, Facebook, Inc.
@@ -32313,7 +37512,7 @@ var Danger = {
 
 module.exports = Danger;
 }).call(this,require('_process'))
-},{"_process":5,"fbjs/lib/ExecutionEnvironment":137,"fbjs/lib/createNodesFromMarkup":142,"fbjs/lib/emptyFunction":143,"fbjs/lib/getMarkupWrap":147,"fbjs/lib/invariant":151}],19:[function(require,module,exports){
+},{"_process":7,"fbjs/lib/ExecutionEnvironment":144,"fbjs/lib/createNodesFromMarkup":149,"fbjs/lib/emptyFunction":150,"fbjs/lib/getMarkupWrap":154,"fbjs/lib/invariant":158}],26:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -32341,7 +37540,7 @@ var keyOf = require('fbjs/lib/keyOf');
 var DefaultEventPluginOrder = [keyOf({ ResponderEventPlugin: null }), keyOf({ SimpleEventPlugin: null }), keyOf({ TapEventPlugin: null }), keyOf({ EnterLeaveEventPlugin: null }), keyOf({ ChangeEventPlugin: null }), keyOf({ SelectEventPlugin: null }), keyOf({ BeforeInputEventPlugin: null })];
 
 module.exports = DefaultEventPluginOrder;
-},{"fbjs/lib/keyOf":155}],20:[function(require,module,exports){
+},{"fbjs/lib/keyOf":162}],27:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -32466,7 +37665,7 @@ var EnterLeaveEventPlugin = {
 };
 
 module.exports = EnterLeaveEventPlugin;
-},{"./EventConstants":21,"./EventPropagators":25,"./ReactMount":72,"./SyntheticMouseEvent":103,"fbjs/lib/keyOf":155}],21:[function(require,module,exports){
+},{"./EventConstants":28,"./EventPropagators":32,"./ReactMount":79,"./SyntheticMouseEvent":110,"fbjs/lib/keyOf":162}],28:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -32559,7 +37758,7 @@ var EventConstants = {
 };
 
 module.exports = EventConstants;
-},{"fbjs/lib/keyMirror":154}],22:[function(require,module,exports){
+},{"fbjs/lib/keyMirror":161}],29:[function(require,module,exports){
 (function (process){
 /**
  * Copyright 2013-2015, Facebook, Inc.
@@ -32841,7 +38040,7 @@ var EventPluginHub = {
 
 module.exports = EventPluginHub;
 }).call(this,require('_process'))
-},{"./EventPluginRegistry":23,"./EventPluginUtils":24,"./ReactErrorUtils":63,"./accumulateInto":109,"./forEachAccumulated":117,"_process":5,"fbjs/lib/invariant":151,"fbjs/lib/warning":162}],23:[function(require,module,exports){
+},{"./EventPluginRegistry":30,"./EventPluginUtils":31,"./ReactErrorUtils":70,"./accumulateInto":116,"./forEachAccumulated":124,"_process":7,"fbjs/lib/invariant":158,"fbjs/lib/warning":169}],30:[function(require,module,exports){
 (function (process){
 /**
  * Copyright 2013-2015, Facebook, Inc.
@@ -33064,7 +38263,7 @@ var EventPluginRegistry = {
 
 module.exports = EventPluginRegistry;
 }).call(this,require('_process'))
-},{"_process":5,"fbjs/lib/invariant":151}],24:[function(require,module,exports){
+},{"_process":7,"fbjs/lib/invariant":158}],31:[function(require,module,exports){
 (function (process){
 /**
  * Copyright 2013-2015, Facebook, Inc.
@@ -33269,7 +38468,7 @@ var EventPluginUtils = {
 
 module.exports = EventPluginUtils;
 }).call(this,require('_process'))
-},{"./EventConstants":21,"./ReactErrorUtils":63,"_process":5,"fbjs/lib/invariant":151,"fbjs/lib/warning":162}],25:[function(require,module,exports){
+},{"./EventConstants":28,"./ReactErrorUtils":70,"_process":7,"fbjs/lib/invariant":158,"fbjs/lib/warning":169}],32:[function(require,module,exports){
 (function (process){
 /**
  * Copyright 2013-2015, Facebook, Inc.
@@ -33407,7 +38606,7 @@ var EventPropagators = {
 
 module.exports = EventPropagators;
 }).call(this,require('_process'))
-},{"./EventConstants":21,"./EventPluginHub":22,"./accumulateInto":109,"./forEachAccumulated":117,"_process":5,"fbjs/lib/warning":162}],26:[function(require,module,exports){
+},{"./EventConstants":28,"./EventPluginHub":29,"./accumulateInto":116,"./forEachAccumulated":124,"_process":7,"fbjs/lib/warning":169}],33:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -33503,7 +38702,7 @@ assign(FallbackCompositionState.prototype, {
 PooledClass.addPoolingTo(FallbackCompositionState);
 
 module.exports = FallbackCompositionState;
-},{"./Object.assign":29,"./PooledClass":30,"./getTextContentAccessor":124}],27:[function(require,module,exports){
+},{"./Object.assign":36,"./PooledClass":37,"./getTextContentAccessor":131}],34:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -33686,8 +38885,8 @@ var HTMLDOMPropertyConfig = {
      */
     // autoCapitalize and autoCorrect are supported in Mobile Safari for
     // keyboard hints.
-    autoCapitalize: null,
-    autoCorrect: null,
+    autoCapitalize: MUST_USE_ATTRIBUTE,
+    autoCorrect: MUST_USE_ATTRIBUTE,
     // autoSave allows WebKit/Blink to persist values of input fields on page reloads
     autoSave: null,
     // color is for Safari mask-icon link
@@ -33718,9 +38917,7 @@ var HTMLDOMPropertyConfig = {
     httpEquiv: 'http-equiv'
   },
   DOMPropertyNames: {
-    autoCapitalize: 'autocapitalize',
     autoComplete: 'autocomplete',
-    autoCorrect: 'autocorrect',
     autoFocus: 'autofocus',
     autoPlay: 'autoplay',
     autoSave: 'autosave',
@@ -33736,7 +38933,7 @@ var HTMLDOMPropertyConfig = {
 };
 
 module.exports = HTMLDOMPropertyConfig;
-},{"./DOMProperty":16,"fbjs/lib/ExecutionEnvironment":137}],28:[function(require,module,exports){
+},{"./DOMProperty":23,"fbjs/lib/ExecutionEnvironment":144}],35:[function(require,module,exports){
 (function (process){
 /**
  * Copyright 2013-2015, Facebook, Inc.
@@ -33873,7 +39070,7 @@ var LinkedValueUtils = {
 
 module.exports = LinkedValueUtils;
 }).call(this,require('_process'))
-},{"./ReactPropTypeLocations":80,"./ReactPropTypes":81,"_process":5,"fbjs/lib/invariant":151,"fbjs/lib/warning":162}],29:[function(require,module,exports){
+},{"./ReactPropTypeLocations":87,"./ReactPropTypes":88,"_process":7,"fbjs/lib/invariant":158,"fbjs/lib/warning":169}],36:[function(require,module,exports){
 /**
  * Copyright 2014-2015, Facebook, Inc.
  * All rights reserved.
@@ -33921,7 +39118,7 @@ function assign(target, sources) {
 }
 
 module.exports = assign;
-},{}],30:[function(require,module,exports){
+},{}],37:[function(require,module,exports){
 (function (process){
 /**
  * Copyright 2013-2015, Facebook, Inc.
@@ -34043,7 +39240,7 @@ var PooledClass = {
 
 module.exports = PooledClass;
 }).call(this,require('_process'))
-},{"_process":5,"fbjs/lib/invariant":151}],31:[function(require,module,exports){
+},{"_process":7,"fbjs/lib/invariant":158}],38:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -34084,7 +39281,7 @@ React.__SECRET_DOM_DO_NOT_USE_OR_YOU_WILL_BE_FIRED = ReactDOM;
 React.__SECRET_DOM_SERVER_DO_NOT_USE_OR_YOU_WILL_BE_FIRED = ReactDOMServer;
 
 module.exports = React;
-},{"./Object.assign":29,"./ReactDOM":42,"./ReactDOMServer":52,"./ReactIsomorphic":70,"./deprecated":113}],32:[function(require,module,exports){
+},{"./Object.assign":36,"./ReactDOM":49,"./ReactDOMServer":59,"./ReactIsomorphic":77,"./deprecated":120}],39:[function(require,module,exports){
 (function (process){
 /**
  * Copyright 2013-2015, Facebook, Inc.
@@ -34123,7 +39320,7 @@ var ReactBrowserComponentMixin = {
 
 module.exports = ReactBrowserComponentMixin;
 }).call(this,require('_process'))
-},{"./ReactInstanceMap":69,"./findDOMNode":115,"_process":5,"fbjs/lib/warning":162}],33:[function(require,module,exports){
+},{"./ReactInstanceMap":76,"./findDOMNode":122,"_process":7,"fbjs/lib/warning":169}],40:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -34448,7 +39645,7 @@ ReactPerf.measureMethods(ReactBrowserEventEmitter, 'ReactBrowserEventEmitter', {
 });
 
 module.exports = ReactBrowserEventEmitter;
-},{"./EventConstants":21,"./EventPluginHub":22,"./EventPluginRegistry":23,"./Object.assign":29,"./ReactEventEmitterMixin":64,"./ReactPerf":78,"./ViewportMetrics":108,"./isEventSupported":126}],34:[function(require,module,exports){
+},{"./EventConstants":28,"./EventPluginHub":29,"./EventPluginRegistry":30,"./Object.assign":36,"./ReactEventEmitterMixin":71,"./ReactPerf":85,"./ViewportMetrics":115,"./isEventSupported":133}],41:[function(require,module,exports){
 (function (process){
 /**
  * Copyright 2014-2015, Facebook, Inc.
@@ -34573,7 +39770,7 @@ var ReactChildReconciler = {
 
 module.exports = ReactChildReconciler;
 }).call(this,require('_process'))
-},{"./ReactReconciler":83,"./instantiateReactComponent":125,"./shouldUpdateReactComponent":133,"./traverseAllChildren":134,"_process":5,"fbjs/lib/warning":162}],35:[function(require,module,exports){
+},{"./ReactReconciler":90,"./instantiateReactComponent":132,"./shouldUpdateReactComponent":140,"./traverseAllChildren":141,"_process":7,"fbjs/lib/warning":169}],42:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -34756,7 +39953,7 @@ var ReactChildren = {
 };
 
 module.exports = ReactChildren;
-},{"./PooledClass":30,"./ReactElement":59,"./traverseAllChildren":134,"fbjs/lib/emptyFunction":143}],36:[function(require,module,exports){
+},{"./PooledClass":37,"./ReactElement":66,"./traverseAllChildren":141,"fbjs/lib/emptyFunction":150}],43:[function(require,module,exports){
 (function (process){
 /**
  * Copyright 2013-2015, Facebook, Inc.
@@ -35530,7 +40727,7 @@ var ReactClass = {
 
 module.exports = ReactClass;
 }).call(this,require('_process'))
-},{"./Object.assign":29,"./ReactComponent":37,"./ReactElement":59,"./ReactNoopUpdateQueue":76,"./ReactPropTypeLocationNames":79,"./ReactPropTypeLocations":80,"_process":5,"fbjs/lib/emptyObject":144,"fbjs/lib/invariant":151,"fbjs/lib/keyMirror":154,"fbjs/lib/keyOf":155,"fbjs/lib/warning":162}],37:[function(require,module,exports){
+},{"./Object.assign":36,"./ReactComponent":44,"./ReactElement":66,"./ReactNoopUpdateQueue":83,"./ReactPropTypeLocationNames":86,"./ReactPropTypeLocations":87,"_process":7,"fbjs/lib/emptyObject":151,"fbjs/lib/invariant":158,"fbjs/lib/keyMirror":161,"fbjs/lib/keyOf":162,"fbjs/lib/warning":169}],44:[function(require,module,exports){
 (function (process){
 /**
  * Copyright 2013-2015, Facebook, Inc.
@@ -35655,7 +40852,7 @@ if (process.env.NODE_ENV !== 'production') {
 
 module.exports = ReactComponent;
 }).call(this,require('_process'))
-},{"./ReactNoopUpdateQueue":76,"./canDefineProperty":111,"_process":5,"fbjs/lib/emptyObject":144,"fbjs/lib/invariant":151,"fbjs/lib/warning":162}],38:[function(require,module,exports){
+},{"./ReactNoopUpdateQueue":83,"./canDefineProperty":118,"_process":7,"fbjs/lib/emptyObject":151,"fbjs/lib/invariant":158,"fbjs/lib/warning":169}],45:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -35697,7 +40894,7 @@ var ReactComponentBrowserEnvironment = {
 };
 
 module.exports = ReactComponentBrowserEnvironment;
-},{"./ReactDOMIDOperations":47,"./ReactMount":72}],39:[function(require,module,exports){
+},{"./ReactDOMIDOperations":54,"./ReactMount":79}],46:[function(require,module,exports){
 (function (process){
 /**
  * Copyright 2014-2015, Facebook, Inc.
@@ -35751,7 +40948,7 @@ var ReactComponentEnvironment = {
 
 module.exports = ReactComponentEnvironment;
 }).call(this,require('_process'))
-},{"_process":5,"fbjs/lib/invariant":151}],40:[function(require,module,exports){
+},{"_process":7,"fbjs/lib/invariant":158}],47:[function(require,module,exports){
 (function (process){
 /**
  * Copyright 2013-2015, Facebook, Inc.
@@ -36448,7 +41645,7 @@ var ReactCompositeComponent = {
 
 module.exports = ReactCompositeComponent;
 }).call(this,require('_process'))
-},{"./Object.assign":29,"./ReactComponentEnvironment":39,"./ReactCurrentOwner":41,"./ReactElement":59,"./ReactInstanceMap":69,"./ReactPerf":78,"./ReactPropTypeLocationNames":79,"./ReactPropTypeLocations":80,"./ReactReconciler":83,"./ReactUpdateQueue":89,"./shouldUpdateReactComponent":133,"_process":5,"fbjs/lib/emptyObject":144,"fbjs/lib/invariant":151,"fbjs/lib/warning":162}],41:[function(require,module,exports){
+},{"./Object.assign":36,"./ReactComponentEnvironment":46,"./ReactCurrentOwner":48,"./ReactElement":66,"./ReactInstanceMap":76,"./ReactPerf":85,"./ReactPropTypeLocationNames":86,"./ReactPropTypeLocations":87,"./ReactReconciler":90,"./ReactUpdateQueue":96,"./shouldUpdateReactComponent":140,"_process":7,"fbjs/lib/emptyObject":151,"fbjs/lib/invariant":158,"fbjs/lib/warning":169}],48:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -36479,7 +41676,7 @@ var ReactCurrentOwner = {
 };
 
 module.exports = ReactCurrentOwner;
-},{}],42:[function(require,module,exports){
+},{}],49:[function(require,module,exports){
 (function (process){
 /**
  * Copyright 2013-2015, Facebook, Inc.
@@ -36574,7 +41771,7 @@ if (process.env.NODE_ENV !== 'production') {
 
 module.exports = React;
 }).call(this,require('_process'))
-},{"./ReactCurrentOwner":41,"./ReactDOMTextComponent":53,"./ReactDefaultInjection":56,"./ReactInstanceHandles":68,"./ReactMount":72,"./ReactPerf":78,"./ReactReconciler":83,"./ReactUpdates":90,"./ReactVersion":91,"./findDOMNode":115,"./renderSubtreeIntoContainer":130,"_process":5,"fbjs/lib/ExecutionEnvironment":137,"fbjs/lib/warning":162}],43:[function(require,module,exports){
+},{"./ReactCurrentOwner":48,"./ReactDOMTextComponent":60,"./ReactDefaultInjection":63,"./ReactInstanceHandles":75,"./ReactMount":79,"./ReactPerf":85,"./ReactReconciler":90,"./ReactUpdates":97,"./ReactVersion":98,"./findDOMNode":122,"./renderSubtreeIntoContainer":137,"_process":7,"fbjs/lib/ExecutionEnvironment":144,"fbjs/lib/warning":169}],50:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -36625,7 +41822,7 @@ var ReactDOMButton = {
 };
 
 module.exports = ReactDOMButton;
-},{}],44:[function(require,module,exports){
+},{}],51:[function(require,module,exports){
 (function (process){
 /**
  * Copyright 2013-2015, Facebook, Inc.
@@ -37590,7 +42787,7 @@ assign(ReactDOMComponent.prototype, ReactDOMComponent.Mixin, ReactMultiChild.Mix
 
 module.exports = ReactDOMComponent;
 }).call(this,require('_process'))
-},{"./AutoFocusUtils":8,"./CSSPropertyOperations":11,"./DOMProperty":16,"./DOMPropertyOperations":17,"./EventConstants":21,"./Object.assign":29,"./ReactBrowserEventEmitter":33,"./ReactComponentBrowserEnvironment":38,"./ReactDOMButton":43,"./ReactDOMInput":48,"./ReactDOMOption":49,"./ReactDOMSelect":50,"./ReactDOMTextarea":54,"./ReactMount":72,"./ReactMultiChild":73,"./ReactPerf":78,"./ReactUpdateQueue":89,"./canDefineProperty":111,"./escapeTextContentForBrowser":114,"./isEventSupported":126,"./setInnerHTML":131,"./setTextContent":132,"./validateDOMNesting":135,"_process":5,"fbjs/lib/invariant":151,"fbjs/lib/keyOf":155,"fbjs/lib/shallowEqual":160,"fbjs/lib/warning":162}],45:[function(require,module,exports){
+},{"./AutoFocusUtils":15,"./CSSPropertyOperations":18,"./DOMProperty":23,"./DOMPropertyOperations":24,"./EventConstants":28,"./Object.assign":36,"./ReactBrowserEventEmitter":40,"./ReactComponentBrowserEnvironment":45,"./ReactDOMButton":50,"./ReactDOMInput":55,"./ReactDOMOption":56,"./ReactDOMSelect":57,"./ReactDOMTextarea":61,"./ReactMount":79,"./ReactMultiChild":80,"./ReactPerf":85,"./ReactUpdateQueue":96,"./canDefineProperty":118,"./escapeTextContentForBrowser":121,"./isEventSupported":133,"./setInnerHTML":138,"./setTextContent":139,"./validateDOMNesting":142,"_process":7,"fbjs/lib/invariant":158,"fbjs/lib/keyOf":162,"fbjs/lib/shallowEqual":167,"fbjs/lib/warning":169}],52:[function(require,module,exports){
 (function (process){
 /**
  * Copyright 2013-2015, Facebook, Inc.
@@ -37770,7 +42967,7 @@ var ReactDOMFactories = mapObject({
 
 module.exports = ReactDOMFactories;
 }).call(this,require('_process'))
-},{"./ReactElement":59,"./ReactElementValidator":60,"_process":5,"fbjs/lib/mapObject":156}],46:[function(require,module,exports){
+},{"./ReactElement":66,"./ReactElementValidator":67,"_process":7,"fbjs/lib/mapObject":163}],53:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -37789,7 +42986,7 @@ var ReactDOMFeatureFlags = {
 };
 
 module.exports = ReactDOMFeatureFlags;
-},{}],47:[function(require,module,exports){
+},{}],54:[function(require,module,exports){
 (function (process){
 /**
  * Copyright 2013-2015, Facebook, Inc.
@@ -37886,7 +43083,7 @@ ReactPerf.measureMethods(ReactDOMIDOperations, 'ReactDOMIDOperations', {
 
 module.exports = ReactDOMIDOperations;
 }).call(this,require('_process'))
-},{"./DOMChildrenOperations":15,"./DOMPropertyOperations":17,"./ReactMount":72,"./ReactPerf":78,"_process":5,"fbjs/lib/invariant":151}],48:[function(require,module,exports){
+},{"./DOMChildrenOperations":22,"./DOMPropertyOperations":24,"./ReactMount":79,"./ReactPerf":85,"_process":7,"fbjs/lib/invariant":158}],55:[function(require,module,exports){
 (function (process){
 /**
  * Copyright 2013-2015, Facebook, Inc.
@@ -38042,7 +43239,7 @@ function _handleChange(event) {
 
 module.exports = ReactDOMInput;
 }).call(this,require('_process'))
-},{"./LinkedValueUtils":28,"./Object.assign":29,"./ReactDOMIDOperations":47,"./ReactMount":72,"./ReactUpdates":90,"_process":5,"fbjs/lib/invariant":151}],49:[function(require,module,exports){
+},{"./LinkedValueUtils":35,"./Object.assign":36,"./ReactDOMIDOperations":54,"./ReactMount":79,"./ReactUpdates":97,"_process":7,"fbjs/lib/invariant":158}],56:[function(require,module,exports){
 (function (process){
 /**
  * Copyright 2013-2015, Facebook, Inc.
@@ -38131,7 +43328,7 @@ var ReactDOMOption = {
 
 module.exports = ReactDOMOption;
 }).call(this,require('_process'))
-},{"./Object.assign":29,"./ReactChildren":35,"./ReactDOMSelect":50,"_process":5,"fbjs/lib/warning":162}],50:[function(require,module,exports){
+},{"./Object.assign":36,"./ReactChildren":42,"./ReactDOMSelect":57,"_process":7,"fbjs/lib/warning":169}],57:[function(require,module,exports){
 (function (process){
 /**
  * Copyright 2013-2015, Facebook, Inc.
@@ -38163,7 +43360,7 @@ function updateOptionsIfPendingUpdateAndMounted() {
     var value = LinkedValueUtils.getValue(props);
 
     if (value != null) {
-      updateOptions(this, props, value);
+      updateOptions(this, Boolean(props.multiple), value);
     }
   }
 }
@@ -38322,7 +43519,7 @@ function _handleChange(event) {
 
 module.exports = ReactDOMSelect;
 }).call(this,require('_process'))
-},{"./LinkedValueUtils":28,"./Object.assign":29,"./ReactMount":72,"./ReactUpdates":90,"_process":5,"fbjs/lib/warning":162}],51:[function(require,module,exports){
+},{"./LinkedValueUtils":35,"./Object.assign":36,"./ReactMount":79,"./ReactUpdates":97,"_process":7,"fbjs/lib/warning":169}],58:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -38535,7 +43732,7 @@ var ReactDOMSelection = {
 };
 
 module.exports = ReactDOMSelection;
-},{"./getNodeForCharacterOffset":123,"./getTextContentAccessor":124,"fbjs/lib/ExecutionEnvironment":137}],52:[function(require,module,exports){
+},{"./getNodeForCharacterOffset":130,"./getTextContentAccessor":131,"fbjs/lib/ExecutionEnvironment":144}],59:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -38562,7 +43759,7 @@ var ReactDOMServer = {
 };
 
 module.exports = ReactDOMServer;
-},{"./ReactDefaultInjection":56,"./ReactServerRendering":87,"./ReactVersion":91}],53:[function(require,module,exports){
+},{"./ReactDefaultInjection":63,"./ReactServerRendering":94,"./ReactVersion":98}],60:[function(require,module,exports){
 (function (process){
 /**
  * Copyright 2013-2015, Facebook, Inc.
@@ -38692,7 +43889,7 @@ assign(ReactDOMTextComponent.prototype, {
 
 module.exports = ReactDOMTextComponent;
 }).call(this,require('_process'))
-},{"./DOMChildrenOperations":15,"./DOMPropertyOperations":17,"./Object.assign":29,"./ReactComponentBrowserEnvironment":38,"./ReactMount":72,"./escapeTextContentForBrowser":114,"./setTextContent":132,"./validateDOMNesting":135,"_process":5}],54:[function(require,module,exports){
+},{"./DOMChildrenOperations":22,"./DOMPropertyOperations":24,"./Object.assign":36,"./ReactComponentBrowserEnvironment":45,"./ReactMount":79,"./escapeTextContentForBrowser":121,"./setTextContent":139,"./validateDOMNesting":142,"_process":7}],61:[function(require,module,exports){
 (function (process){
 /**
  * Copyright 2013-2015, Facebook, Inc.
@@ -38808,7 +44005,7 @@ function _handleChange(event) {
 
 module.exports = ReactDOMTextarea;
 }).call(this,require('_process'))
-},{"./LinkedValueUtils":28,"./Object.assign":29,"./ReactDOMIDOperations":47,"./ReactUpdates":90,"_process":5,"fbjs/lib/invariant":151,"fbjs/lib/warning":162}],55:[function(require,module,exports){
+},{"./LinkedValueUtils":35,"./Object.assign":36,"./ReactDOMIDOperations":54,"./ReactUpdates":97,"_process":7,"fbjs/lib/invariant":158,"fbjs/lib/warning":169}],62:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -38876,7 +44073,7 @@ var ReactDefaultBatchingStrategy = {
 };
 
 module.exports = ReactDefaultBatchingStrategy;
-},{"./Object.assign":29,"./ReactUpdates":90,"./Transaction":107,"fbjs/lib/emptyFunction":143}],56:[function(require,module,exports){
+},{"./Object.assign":36,"./ReactUpdates":97,"./Transaction":114,"fbjs/lib/emptyFunction":150}],63:[function(require,module,exports){
 (function (process){
 /**
  * Copyright 2013-2015, Facebook, Inc.
@@ -38976,7 +44173,7 @@ module.exports = {
   inject: inject
 };
 }).call(this,require('_process'))
-},{"./BeforeInputEventPlugin":9,"./ChangeEventPlugin":13,"./ClientReactRootIndex":14,"./DefaultEventPluginOrder":19,"./EnterLeaveEventPlugin":20,"./HTMLDOMPropertyConfig":27,"./ReactBrowserComponentMixin":32,"./ReactComponentBrowserEnvironment":38,"./ReactDOMComponent":44,"./ReactDOMTextComponent":53,"./ReactDefaultBatchingStrategy":55,"./ReactDefaultPerf":57,"./ReactEventListener":65,"./ReactInjection":66,"./ReactInstanceHandles":68,"./ReactMount":72,"./ReactReconcileTransaction":82,"./SVGDOMPropertyConfig":92,"./SelectEventPlugin":93,"./ServerReactRootIndex":94,"./SimpleEventPlugin":95,"_process":5,"fbjs/lib/ExecutionEnvironment":137}],57:[function(require,module,exports){
+},{"./BeforeInputEventPlugin":16,"./ChangeEventPlugin":20,"./ClientReactRootIndex":21,"./DefaultEventPluginOrder":26,"./EnterLeaveEventPlugin":27,"./HTMLDOMPropertyConfig":34,"./ReactBrowserComponentMixin":39,"./ReactComponentBrowserEnvironment":45,"./ReactDOMComponent":51,"./ReactDOMTextComponent":60,"./ReactDefaultBatchingStrategy":62,"./ReactDefaultPerf":64,"./ReactEventListener":72,"./ReactInjection":73,"./ReactInstanceHandles":75,"./ReactMount":79,"./ReactReconcileTransaction":89,"./SVGDOMPropertyConfig":99,"./SelectEventPlugin":100,"./ServerReactRootIndex":101,"./SimpleEventPlugin":102,"_process":7,"fbjs/lib/ExecutionEnvironment":144}],64:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -39214,7 +44411,7 @@ var ReactDefaultPerf = {
 };
 
 module.exports = ReactDefaultPerf;
-},{"./DOMProperty":16,"./ReactDefaultPerfAnalysis":58,"./ReactMount":72,"./ReactPerf":78,"fbjs/lib/performanceNow":159}],58:[function(require,module,exports){
+},{"./DOMProperty":23,"./ReactDefaultPerfAnalysis":65,"./ReactMount":79,"./ReactPerf":85,"fbjs/lib/performanceNow":166}],65:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -39242,7 +44439,9 @@ var DOM_OPERATION_TYPES = {
   'setValueForProperty': 'update attribute',
   'setValueForAttribute': 'update attribute',
   'deleteValueForProperty': 'remove attribute',
-  'dangerouslyReplaceNodeWithMarkupByID': 'replace'
+  'setValueForStyles': 'update styles',
+  'replaceNodeWithMarkup': 'replace',
+  'updateTextContent': 'set textContent'
 };
 
 function getTotalTime(measurements) {
@@ -39414,7 +44613,7 @@ var ReactDefaultPerfAnalysis = {
 };
 
 module.exports = ReactDefaultPerfAnalysis;
-},{"./Object.assign":29}],59:[function(require,module,exports){
+},{"./Object.assign":36}],66:[function(require,module,exports){
 (function (process){
 /**
  * Copyright 2014-2015, Facebook, Inc.
@@ -39664,7 +44863,7 @@ ReactElement.isValidElement = function (object) {
 
 module.exports = ReactElement;
 }).call(this,require('_process'))
-},{"./Object.assign":29,"./ReactCurrentOwner":41,"./canDefineProperty":111,"_process":5}],60:[function(require,module,exports){
+},{"./Object.assign":36,"./ReactCurrentOwner":48,"./canDefineProperty":118,"_process":7}],67:[function(require,module,exports){
 (function (process){
 /**
  * Copyright 2014-2015, Facebook, Inc.
@@ -39948,7 +45147,7 @@ var ReactElementValidator = {
 
 module.exports = ReactElementValidator;
 }).call(this,require('_process'))
-},{"./ReactCurrentOwner":41,"./ReactElement":59,"./ReactPropTypeLocationNames":79,"./ReactPropTypeLocations":80,"./canDefineProperty":111,"./getIteratorFn":122,"_process":5,"fbjs/lib/invariant":151,"fbjs/lib/warning":162}],61:[function(require,module,exports){
+},{"./ReactCurrentOwner":48,"./ReactElement":66,"./ReactPropTypeLocationNames":86,"./ReactPropTypeLocations":87,"./canDefineProperty":118,"./getIteratorFn":129,"_process":7,"fbjs/lib/invariant":158,"fbjs/lib/warning":169}],68:[function(require,module,exports){
 /**
  * Copyright 2014-2015, Facebook, Inc.
  * All rights reserved.
@@ -40000,7 +45199,7 @@ assign(ReactEmptyComponent.prototype, {
 ReactEmptyComponent.injection = ReactEmptyComponentInjection;
 
 module.exports = ReactEmptyComponent;
-},{"./Object.assign":29,"./ReactElement":59,"./ReactEmptyComponentRegistry":62,"./ReactReconciler":83}],62:[function(require,module,exports){
+},{"./Object.assign":36,"./ReactElement":66,"./ReactEmptyComponentRegistry":69,"./ReactReconciler":90}],69:[function(require,module,exports){
 /**
  * Copyright 2014-2015, Facebook, Inc.
  * All rights reserved.
@@ -40049,7 +45248,7 @@ var ReactEmptyComponentRegistry = {
 };
 
 module.exports = ReactEmptyComponentRegistry;
-},{}],63:[function(require,module,exports){
+},{}],70:[function(require,module,exports){
 (function (process){
 /**
  * Copyright 2013-2015, Facebook, Inc.
@@ -40129,7 +45328,7 @@ if (process.env.NODE_ENV !== 'production') {
 
 module.exports = ReactErrorUtils;
 }).call(this,require('_process'))
-},{"_process":5}],64:[function(require,module,exports){
+},{"_process":7}],71:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -40168,7 +45367,7 @@ var ReactEventEmitterMixin = {
 };
 
 module.exports = ReactEventEmitterMixin;
-},{"./EventPluginHub":22}],65:[function(require,module,exports){
+},{"./EventPluginHub":29}],72:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -40380,7 +45579,7 @@ var ReactEventListener = {
 };
 
 module.exports = ReactEventListener;
-},{"./Object.assign":29,"./PooledClass":30,"./ReactInstanceHandles":68,"./ReactMount":72,"./ReactUpdates":90,"./getEventTarget":121,"fbjs/lib/EventListener":136,"fbjs/lib/ExecutionEnvironment":137,"fbjs/lib/getUnboundedScrollPosition":148}],66:[function(require,module,exports){
+},{"./Object.assign":36,"./PooledClass":37,"./ReactInstanceHandles":75,"./ReactMount":79,"./ReactUpdates":97,"./getEventTarget":128,"fbjs/lib/EventListener":143,"fbjs/lib/ExecutionEnvironment":144,"fbjs/lib/getUnboundedScrollPosition":155}],73:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -40419,7 +45618,7 @@ var ReactInjection = {
 };
 
 module.exports = ReactInjection;
-},{"./DOMProperty":16,"./EventPluginHub":22,"./ReactBrowserEventEmitter":33,"./ReactClass":36,"./ReactComponentEnvironment":39,"./ReactEmptyComponent":61,"./ReactNativeComponent":75,"./ReactPerf":78,"./ReactRootIndex":85,"./ReactUpdates":90}],67:[function(require,module,exports){
+},{"./DOMProperty":23,"./EventPluginHub":29,"./ReactBrowserEventEmitter":40,"./ReactClass":43,"./ReactComponentEnvironment":46,"./ReactEmptyComponent":68,"./ReactNativeComponent":82,"./ReactPerf":85,"./ReactRootIndex":92,"./ReactUpdates":97}],74:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -40544,7 +45743,7 @@ var ReactInputSelection = {
 };
 
 module.exports = ReactInputSelection;
-},{"./ReactDOMSelection":51,"fbjs/lib/containsNode":140,"fbjs/lib/focusNode":145,"fbjs/lib/getActiveElement":146}],68:[function(require,module,exports){
+},{"./ReactDOMSelection":58,"fbjs/lib/containsNode":147,"fbjs/lib/focusNode":152,"fbjs/lib/getActiveElement":153}],75:[function(require,module,exports){
 (function (process){
 /**
  * Copyright 2013-2015, Facebook, Inc.
@@ -40849,7 +46048,7 @@ var ReactInstanceHandles = {
 
 module.exports = ReactInstanceHandles;
 }).call(this,require('_process'))
-},{"./ReactRootIndex":85,"_process":5,"fbjs/lib/invariant":151}],69:[function(require,module,exports){
+},{"./ReactRootIndex":92,"_process":7,"fbjs/lib/invariant":158}],76:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -40897,7 +46096,7 @@ var ReactInstanceMap = {
 };
 
 module.exports = ReactInstanceMap;
-},{}],70:[function(require,module,exports){
+},{}],77:[function(require,module,exports){
 (function (process){
 /**
  * Copyright 2013-2015, Facebook, Inc.
@@ -40974,7 +46173,7 @@ var React = {
 
 module.exports = React;
 }).call(this,require('_process'))
-},{"./Object.assign":29,"./ReactChildren":35,"./ReactClass":36,"./ReactComponent":37,"./ReactDOMFactories":45,"./ReactElement":59,"./ReactElementValidator":60,"./ReactPropTypes":81,"./ReactVersion":91,"./onlyChild":128,"_process":5}],71:[function(require,module,exports){
+},{"./Object.assign":36,"./ReactChildren":42,"./ReactClass":43,"./ReactComponent":44,"./ReactDOMFactories":52,"./ReactElement":66,"./ReactElementValidator":67,"./ReactPropTypes":88,"./ReactVersion":98,"./onlyChild":135,"_process":7}],78:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -41020,7 +46219,7 @@ var ReactMarkupChecksum = {
 };
 
 module.exports = ReactMarkupChecksum;
-},{"./adler32":110}],72:[function(require,module,exports){
+},{"./adler32":117}],79:[function(require,module,exports){
 (function (process){
 /**
  * Copyright 2013-2015, Facebook, Inc.
@@ -41873,7 +47072,7 @@ ReactPerf.measureMethods(ReactMount, 'ReactMount', {
 
 module.exports = ReactMount;
 }).call(this,require('_process'))
-},{"./DOMProperty":16,"./Object.assign":29,"./ReactBrowserEventEmitter":33,"./ReactCurrentOwner":41,"./ReactDOMFeatureFlags":46,"./ReactElement":59,"./ReactEmptyComponentRegistry":62,"./ReactInstanceHandles":68,"./ReactInstanceMap":69,"./ReactMarkupChecksum":71,"./ReactPerf":78,"./ReactReconciler":83,"./ReactUpdateQueue":89,"./ReactUpdates":90,"./instantiateReactComponent":125,"./setInnerHTML":131,"./shouldUpdateReactComponent":133,"./validateDOMNesting":135,"_process":5,"fbjs/lib/containsNode":140,"fbjs/lib/emptyObject":144,"fbjs/lib/invariant":151,"fbjs/lib/warning":162}],73:[function(require,module,exports){
+},{"./DOMProperty":23,"./Object.assign":36,"./ReactBrowserEventEmitter":40,"./ReactCurrentOwner":48,"./ReactDOMFeatureFlags":53,"./ReactElement":66,"./ReactEmptyComponentRegistry":69,"./ReactInstanceHandles":75,"./ReactInstanceMap":76,"./ReactMarkupChecksum":78,"./ReactPerf":85,"./ReactReconciler":90,"./ReactUpdateQueue":96,"./ReactUpdates":97,"./instantiateReactComponent":132,"./setInnerHTML":138,"./shouldUpdateReactComponent":140,"./validateDOMNesting":142,"_process":7,"fbjs/lib/containsNode":147,"fbjs/lib/emptyObject":151,"fbjs/lib/invariant":158,"fbjs/lib/warning":169}],80:[function(require,module,exports){
 (function (process){
 /**
  * Copyright 2013-2015, Facebook, Inc.
@@ -42372,7 +47571,7 @@ var ReactMultiChild = {
 
 module.exports = ReactMultiChild;
 }).call(this,require('_process'))
-},{"./ReactChildReconciler":34,"./ReactComponentEnvironment":39,"./ReactCurrentOwner":41,"./ReactMultiChildUpdateTypes":74,"./ReactReconciler":83,"./flattenChildren":116,"_process":5}],74:[function(require,module,exports){
+},{"./ReactChildReconciler":41,"./ReactComponentEnvironment":46,"./ReactCurrentOwner":48,"./ReactMultiChildUpdateTypes":81,"./ReactReconciler":90,"./flattenChildren":123,"_process":7}],81:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -42405,7 +47604,7 @@ var ReactMultiChildUpdateTypes = keyMirror({
 });
 
 module.exports = ReactMultiChildUpdateTypes;
-},{"fbjs/lib/keyMirror":154}],75:[function(require,module,exports){
+},{"fbjs/lib/keyMirror":161}],82:[function(require,module,exports){
 (function (process){
 /**
  * Copyright 2014-2015, Facebook, Inc.
@@ -42502,7 +47701,7 @@ var ReactNativeComponent = {
 
 module.exports = ReactNativeComponent;
 }).call(this,require('_process'))
-},{"./Object.assign":29,"_process":5,"fbjs/lib/invariant":151}],76:[function(require,module,exports){
+},{"./Object.assign":36,"_process":7,"fbjs/lib/invariant":158}],83:[function(require,module,exports){
 (function (process){
 /**
  * Copyright 2015, Facebook, Inc.
@@ -42623,7 +47822,7 @@ var ReactNoopUpdateQueue = {
 
 module.exports = ReactNoopUpdateQueue;
 }).call(this,require('_process'))
-},{"_process":5,"fbjs/lib/warning":162}],77:[function(require,module,exports){
+},{"_process":7,"fbjs/lib/warning":169}],84:[function(require,module,exports){
 (function (process){
 /**
  * Copyright 2013-2015, Facebook, Inc.
@@ -42717,7 +47916,7 @@ var ReactOwner = {
 
 module.exports = ReactOwner;
 }).call(this,require('_process'))
-},{"_process":5,"fbjs/lib/invariant":151}],78:[function(require,module,exports){
+},{"_process":7,"fbjs/lib/invariant":158}],85:[function(require,module,exports){
 (function (process){
 /**
  * Copyright 2013-2015, Facebook, Inc.
@@ -42816,7 +48015,7 @@ function _noMeasure(objName, fnName, func) {
 
 module.exports = ReactPerf;
 }).call(this,require('_process'))
-},{"_process":5}],79:[function(require,module,exports){
+},{"_process":7}],86:[function(require,module,exports){
 (function (process){
 /**
  * Copyright 2013-2015, Facebook, Inc.
@@ -42843,7 +48042,7 @@ if (process.env.NODE_ENV !== 'production') {
 
 module.exports = ReactPropTypeLocationNames;
 }).call(this,require('_process'))
-},{"_process":5}],80:[function(require,module,exports){
+},{"_process":7}],87:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -42866,7 +48065,7 @@ var ReactPropTypeLocations = keyMirror({
 });
 
 module.exports = ReactPropTypeLocations;
-},{"fbjs/lib/keyMirror":154}],81:[function(require,module,exports){
+},{"fbjs/lib/keyMirror":161}],88:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -43223,7 +48422,7 @@ function getClassName(propValue) {
 }
 
 module.exports = ReactPropTypes;
-},{"./ReactElement":59,"./ReactPropTypeLocationNames":79,"./getIteratorFn":122,"fbjs/lib/emptyFunction":143}],82:[function(require,module,exports){
+},{"./ReactElement":66,"./ReactPropTypeLocationNames":86,"./getIteratorFn":129,"fbjs/lib/emptyFunction":150}],89:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -43375,7 +48574,7 @@ assign(ReactReconcileTransaction.prototype, Transaction.Mixin, Mixin);
 PooledClass.addPoolingTo(ReactReconcileTransaction);
 
 module.exports = ReactReconcileTransaction;
-},{"./CallbackQueue":12,"./Object.assign":29,"./PooledClass":30,"./ReactBrowserEventEmitter":33,"./ReactDOMFeatureFlags":46,"./ReactInputSelection":67,"./Transaction":107}],83:[function(require,module,exports){
+},{"./CallbackQueue":19,"./Object.assign":36,"./PooledClass":37,"./ReactBrowserEventEmitter":40,"./ReactDOMFeatureFlags":53,"./ReactInputSelection":74,"./Transaction":114}],90:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -43483,7 +48682,7 @@ var ReactReconciler = {
 };
 
 module.exports = ReactReconciler;
-},{"./ReactRef":84}],84:[function(require,module,exports){
+},{"./ReactRef":91}],91:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -43562,7 +48761,7 @@ ReactRef.detachRefs = function (instance, element) {
 };
 
 module.exports = ReactRef;
-},{"./ReactOwner":77}],85:[function(require,module,exports){
+},{"./ReactOwner":84}],92:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -43592,7 +48791,7 @@ var ReactRootIndex = {
 };
 
 module.exports = ReactRootIndex;
-},{}],86:[function(require,module,exports){
+},{}],93:[function(require,module,exports){
 /**
  * Copyright 2014-2015, Facebook, Inc.
  * All rights reserved.
@@ -43616,7 +48815,7 @@ var ReactServerBatchingStrategy = {
 };
 
 module.exports = ReactServerBatchingStrategy;
-},{}],87:[function(require,module,exports){
+},{}],94:[function(require,module,exports){
 (function (process){
 /**
  * Copyright 2013-2015, Facebook, Inc.
@@ -43702,7 +48901,7 @@ module.exports = {
   renderToStaticMarkup: renderToStaticMarkup
 };
 }).call(this,require('_process'))
-},{"./ReactDefaultBatchingStrategy":55,"./ReactElement":59,"./ReactInstanceHandles":68,"./ReactMarkupChecksum":71,"./ReactServerBatchingStrategy":86,"./ReactServerRenderingTransaction":88,"./ReactUpdates":90,"./instantiateReactComponent":125,"_process":5,"fbjs/lib/emptyObject":144,"fbjs/lib/invariant":151}],88:[function(require,module,exports){
+},{"./ReactDefaultBatchingStrategy":62,"./ReactElement":66,"./ReactInstanceHandles":75,"./ReactMarkupChecksum":78,"./ReactServerBatchingStrategy":93,"./ReactServerRenderingTransaction":95,"./ReactUpdates":97,"./instantiateReactComponent":132,"_process":7,"fbjs/lib/emptyObject":151,"fbjs/lib/invariant":158}],95:[function(require,module,exports){
 /**
  * Copyright 2014-2015, Facebook, Inc.
  * All rights reserved.
@@ -43790,7 +48989,7 @@ assign(ReactServerRenderingTransaction.prototype, Transaction.Mixin, Mixin);
 PooledClass.addPoolingTo(ReactServerRenderingTransaction);
 
 module.exports = ReactServerRenderingTransaction;
-},{"./CallbackQueue":12,"./Object.assign":29,"./PooledClass":30,"./Transaction":107,"fbjs/lib/emptyFunction":143}],89:[function(require,module,exports){
+},{"./CallbackQueue":19,"./Object.assign":36,"./PooledClass":37,"./Transaction":114,"fbjs/lib/emptyFunction":150}],96:[function(require,module,exports){
 (function (process){
 /**
  * Copyright 2015, Facebook, Inc.
@@ -44050,7 +49249,7 @@ var ReactUpdateQueue = {
 
 module.exports = ReactUpdateQueue;
 }).call(this,require('_process'))
-},{"./Object.assign":29,"./ReactCurrentOwner":41,"./ReactElement":59,"./ReactInstanceMap":69,"./ReactUpdates":90,"_process":5,"fbjs/lib/invariant":151,"fbjs/lib/warning":162}],90:[function(require,module,exports){
+},{"./Object.assign":36,"./ReactCurrentOwner":48,"./ReactElement":66,"./ReactInstanceMap":76,"./ReactUpdates":97,"_process":7,"fbjs/lib/invariant":158,"fbjs/lib/warning":169}],97:[function(require,module,exports){
 (function (process){
 /**
  * Copyright 2013-2015, Facebook, Inc.
@@ -44276,7 +49475,7 @@ var ReactUpdates = {
 
 module.exports = ReactUpdates;
 }).call(this,require('_process'))
-},{"./CallbackQueue":12,"./Object.assign":29,"./PooledClass":30,"./ReactPerf":78,"./ReactReconciler":83,"./Transaction":107,"_process":5,"fbjs/lib/invariant":151}],91:[function(require,module,exports){
+},{"./CallbackQueue":19,"./Object.assign":36,"./PooledClass":37,"./ReactPerf":85,"./ReactReconciler":90,"./Transaction":114,"_process":7,"fbjs/lib/invariant":158}],98:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -44290,8 +49489,8 @@ module.exports = ReactUpdates;
 
 'use strict';
 
-module.exports = '0.14.3';
-},{}],92:[function(require,module,exports){
+module.exports = '0.14.5';
+},{}],99:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -44419,7 +49618,7 @@ var SVGDOMPropertyConfig = {
 };
 
 module.exports = SVGDOMPropertyConfig;
-},{"./DOMProperty":16}],93:[function(require,module,exports){
+},{"./DOMProperty":23}],100:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -44621,7 +49820,7 @@ var SelectEventPlugin = {
 };
 
 module.exports = SelectEventPlugin;
-},{"./EventConstants":21,"./EventPropagators":25,"./ReactInputSelection":67,"./SyntheticEvent":99,"./isTextInputElement":127,"fbjs/lib/ExecutionEnvironment":137,"fbjs/lib/getActiveElement":146,"fbjs/lib/keyOf":155,"fbjs/lib/shallowEqual":160}],94:[function(require,module,exports){
+},{"./EventConstants":28,"./EventPropagators":32,"./ReactInputSelection":74,"./SyntheticEvent":106,"./isTextInputElement":134,"fbjs/lib/ExecutionEnvironment":144,"fbjs/lib/getActiveElement":153,"fbjs/lib/keyOf":162,"fbjs/lib/shallowEqual":167}],101:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -44651,7 +49850,7 @@ var ServerReactRootIndex = {
 };
 
 module.exports = ServerReactRootIndex;
-},{}],95:[function(require,module,exports){
+},{}],102:[function(require,module,exports){
 (function (process){
 /**
  * Copyright 2013-2015, Facebook, Inc.
@@ -45241,7 +50440,7 @@ var SimpleEventPlugin = {
 
 module.exports = SimpleEventPlugin;
 }).call(this,require('_process'))
-},{"./EventConstants":21,"./EventPropagators":25,"./ReactMount":72,"./SyntheticClipboardEvent":96,"./SyntheticDragEvent":98,"./SyntheticEvent":99,"./SyntheticFocusEvent":100,"./SyntheticKeyboardEvent":102,"./SyntheticMouseEvent":103,"./SyntheticTouchEvent":104,"./SyntheticUIEvent":105,"./SyntheticWheelEvent":106,"./getEventCharCode":118,"_process":5,"fbjs/lib/EventListener":136,"fbjs/lib/emptyFunction":143,"fbjs/lib/invariant":151,"fbjs/lib/keyOf":155}],96:[function(require,module,exports){
+},{"./EventConstants":28,"./EventPropagators":32,"./ReactMount":79,"./SyntheticClipboardEvent":103,"./SyntheticDragEvent":105,"./SyntheticEvent":106,"./SyntheticFocusEvent":107,"./SyntheticKeyboardEvent":109,"./SyntheticMouseEvent":110,"./SyntheticTouchEvent":111,"./SyntheticUIEvent":112,"./SyntheticWheelEvent":113,"./getEventCharCode":125,"_process":7,"fbjs/lib/EventListener":143,"fbjs/lib/emptyFunction":150,"fbjs/lib/invariant":158,"fbjs/lib/keyOf":162}],103:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -45281,7 +50480,7 @@ function SyntheticClipboardEvent(dispatchConfig, dispatchMarker, nativeEvent, na
 SyntheticEvent.augmentClass(SyntheticClipboardEvent, ClipboardEventInterface);
 
 module.exports = SyntheticClipboardEvent;
-},{"./SyntheticEvent":99}],97:[function(require,module,exports){
+},{"./SyntheticEvent":106}],104:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -45319,7 +50518,7 @@ function SyntheticCompositionEvent(dispatchConfig, dispatchMarker, nativeEvent, 
 SyntheticEvent.augmentClass(SyntheticCompositionEvent, CompositionEventInterface);
 
 module.exports = SyntheticCompositionEvent;
-},{"./SyntheticEvent":99}],98:[function(require,module,exports){
+},{"./SyntheticEvent":106}],105:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -45357,7 +50556,7 @@ function SyntheticDragEvent(dispatchConfig, dispatchMarker, nativeEvent, nativeE
 SyntheticMouseEvent.augmentClass(SyntheticDragEvent, DragEventInterface);
 
 module.exports = SyntheticDragEvent;
-},{"./SyntheticMouseEvent":103}],99:[function(require,module,exports){
+},{"./SyntheticMouseEvent":110}],106:[function(require,module,exports){
 (function (process){
 /**
  * Copyright 2013-2015, Facebook, Inc.
@@ -45537,7 +50736,7 @@ PooledClass.addPoolingTo(SyntheticEvent, PooledClass.fourArgumentPooler);
 
 module.exports = SyntheticEvent;
 }).call(this,require('_process'))
-},{"./Object.assign":29,"./PooledClass":30,"_process":5,"fbjs/lib/emptyFunction":143,"fbjs/lib/warning":162}],100:[function(require,module,exports){
+},{"./Object.assign":36,"./PooledClass":37,"_process":7,"fbjs/lib/emptyFunction":150,"fbjs/lib/warning":169}],107:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -45575,7 +50774,7 @@ function SyntheticFocusEvent(dispatchConfig, dispatchMarker, nativeEvent, native
 SyntheticUIEvent.augmentClass(SyntheticFocusEvent, FocusEventInterface);
 
 module.exports = SyntheticFocusEvent;
-},{"./SyntheticUIEvent":105}],101:[function(require,module,exports){
+},{"./SyntheticUIEvent":112}],108:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -45614,7 +50813,7 @@ function SyntheticInputEvent(dispatchConfig, dispatchMarker, nativeEvent, native
 SyntheticEvent.augmentClass(SyntheticInputEvent, InputEventInterface);
 
 module.exports = SyntheticInputEvent;
-},{"./SyntheticEvent":99}],102:[function(require,module,exports){
+},{"./SyntheticEvent":106}],109:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -45700,7 +50899,7 @@ function SyntheticKeyboardEvent(dispatchConfig, dispatchMarker, nativeEvent, nat
 SyntheticUIEvent.augmentClass(SyntheticKeyboardEvent, KeyboardEventInterface);
 
 module.exports = SyntheticKeyboardEvent;
-},{"./SyntheticUIEvent":105,"./getEventCharCode":118,"./getEventKey":119,"./getEventModifierState":120}],103:[function(require,module,exports){
+},{"./SyntheticUIEvent":112,"./getEventCharCode":125,"./getEventKey":126,"./getEventModifierState":127}],110:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -45774,7 +50973,7 @@ function SyntheticMouseEvent(dispatchConfig, dispatchMarker, nativeEvent, native
 SyntheticUIEvent.augmentClass(SyntheticMouseEvent, MouseEventInterface);
 
 module.exports = SyntheticMouseEvent;
-},{"./SyntheticUIEvent":105,"./ViewportMetrics":108,"./getEventModifierState":120}],104:[function(require,module,exports){
+},{"./SyntheticUIEvent":112,"./ViewportMetrics":115,"./getEventModifierState":127}],111:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -45821,7 +51020,7 @@ function SyntheticTouchEvent(dispatchConfig, dispatchMarker, nativeEvent, native
 SyntheticUIEvent.augmentClass(SyntheticTouchEvent, TouchEventInterface);
 
 module.exports = SyntheticTouchEvent;
-},{"./SyntheticUIEvent":105,"./getEventModifierState":120}],105:[function(require,module,exports){
+},{"./SyntheticUIEvent":112,"./getEventModifierState":127}],112:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -45882,7 +51081,7 @@ function SyntheticUIEvent(dispatchConfig, dispatchMarker, nativeEvent, nativeEve
 SyntheticEvent.augmentClass(SyntheticUIEvent, UIEventInterface);
 
 module.exports = SyntheticUIEvent;
-},{"./SyntheticEvent":99,"./getEventTarget":121}],106:[function(require,module,exports){
+},{"./SyntheticEvent":106,"./getEventTarget":128}],113:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -45938,7 +51137,7 @@ function SyntheticWheelEvent(dispatchConfig, dispatchMarker, nativeEvent, native
 SyntheticMouseEvent.augmentClass(SyntheticWheelEvent, WheelEventInterface);
 
 module.exports = SyntheticWheelEvent;
-},{"./SyntheticMouseEvent":103}],107:[function(require,module,exports){
+},{"./SyntheticMouseEvent":110}],114:[function(require,module,exports){
 (function (process){
 /**
  * Copyright 2013-2015, Facebook, Inc.
@@ -46172,7 +51371,7 @@ var Transaction = {
 
 module.exports = Transaction;
 }).call(this,require('_process'))
-},{"_process":5,"fbjs/lib/invariant":151}],108:[function(require,module,exports){
+},{"_process":7,"fbjs/lib/invariant":158}],115:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -46200,7 +51399,7 @@ var ViewportMetrics = {
 };
 
 module.exports = ViewportMetrics;
-},{}],109:[function(require,module,exports){
+},{}],116:[function(require,module,exports){
 (function (process){
 /**
  * Copyright 2014-2015, Facebook, Inc.
@@ -46262,7 +51461,7 @@ function accumulateInto(current, next) {
 
 module.exports = accumulateInto;
 }).call(this,require('_process'))
-},{"_process":5,"fbjs/lib/invariant":151}],110:[function(require,module,exports){
+},{"_process":7,"fbjs/lib/invariant":158}],117:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -46305,7 +51504,7 @@ function adler32(data) {
 }
 
 module.exports = adler32;
-},{}],111:[function(require,module,exports){
+},{}],118:[function(require,module,exports){
 (function (process){
 /**
  * Copyright 2013-2015, Facebook, Inc.
@@ -46332,7 +51531,7 @@ if (process.env.NODE_ENV !== 'production') {
 
 module.exports = canDefineProperty;
 }).call(this,require('_process'))
-},{"_process":5}],112:[function(require,module,exports){
+},{"_process":7}],119:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -46388,7 +51587,7 @@ function dangerousStyleValue(name, value) {
 }
 
 module.exports = dangerousStyleValue;
-},{"./CSSProperty":10}],113:[function(require,module,exports){
+},{"./CSSProperty":17}],120:[function(require,module,exports){
 (function (process){
 /**
  * Copyright 2013-2015, Facebook, Inc.
@@ -46439,7 +51638,7 @@ function deprecated(fnName, newModule, newPackage, ctx, fn) {
 
 module.exports = deprecated;
 }).call(this,require('_process'))
-},{"./Object.assign":29,"_process":5,"fbjs/lib/warning":162}],114:[function(require,module,exports){
+},{"./Object.assign":36,"_process":7,"fbjs/lib/warning":169}],121:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -46478,7 +51677,7 @@ function escapeTextContentForBrowser(text) {
 }
 
 module.exports = escapeTextContentForBrowser;
-},{}],115:[function(require,module,exports){
+},{}],122:[function(require,module,exports){
 (function (process){
 /**
  * Copyright 2013-2015, Facebook, Inc.
@@ -46530,7 +51729,7 @@ function findDOMNode(componentOrElement) {
 
 module.exports = findDOMNode;
 }).call(this,require('_process'))
-},{"./ReactCurrentOwner":41,"./ReactInstanceMap":69,"./ReactMount":72,"_process":5,"fbjs/lib/invariant":151,"fbjs/lib/warning":162}],116:[function(require,module,exports){
+},{"./ReactCurrentOwner":48,"./ReactInstanceMap":76,"./ReactMount":79,"_process":7,"fbjs/lib/invariant":158,"fbjs/lib/warning":169}],123:[function(require,module,exports){
 (function (process){
 /**
  * Copyright 2013-2015, Facebook, Inc.
@@ -46581,7 +51780,7 @@ function flattenChildren(children) {
 
 module.exports = flattenChildren;
 }).call(this,require('_process'))
-},{"./traverseAllChildren":134,"_process":5,"fbjs/lib/warning":162}],117:[function(require,module,exports){
+},{"./traverseAllChildren":141,"_process":7,"fbjs/lib/warning":169}],124:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -46611,7 +51810,7 @@ var forEachAccumulated = function (arr, cb, scope) {
 };
 
 module.exports = forEachAccumulated;
-},{}],118:[function(require,module,exports){
+},{}],125:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -46662,7 +51861,7 @@ function getEventCharCode(nativeEvent) {
 }
 
 module.exports = getEventCharCode;
-},{}],119:[function(require,module,exports){
+},{}],126:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -46766,7 +51965,7 @@ function getEventKey(nativeEvent) {
 }
 
 module.exports = getEventKey;
-},{"./getEventCharCode":118}],120:[function(require,module,exports){
+},{"./getEventCharCode":125}],127:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -46811,7 +52010,7 @@ function getEventModifierState(nativeEvent) {
 }
 
 module.exports = getEventModifierState;
-},{}],121:[function(require,module,exports){
+},{}],128:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -46841,7 +52040,7 @@ function getEventTarget(nativeEvent) {
 }
 
 module.exports = getEventTarget;
-},{}],122:[function(require,module,exports){
+},{}],129:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -46882,7 +52081,7 @@ function getIteratorFn(maybeIterable) {
 }
 
 module.exports = getIteratorFn;
-},{}],123:[function(require,module,exports){
+},{}],130:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -46956,7 +52155,7 @@ function getNodeForCharacterOffset(root, offset) {
 }
 
 module.exports = getNodeForCharacterOffset;
-},{}],124:[function(require,module,exports){
+},{}],131:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -46990,7 +52189,7 @@ function getTextContentAccessor() {
 }
 
 module.exports = getTextContentAccessor;
-},{"fbjs/lib/ExecutionEnvironment":137}],125:[function(require,module,exports){
+},{"fbjs/lib/ExecutionEnvironment":144}],132:[function(require,module,exports){
 (function (process){
 /**
  * Copyright 2013-2015, Facebook, Inc.
@@ -47105,7 +52304,7 @@ function instantiateReactComponent(node) {
 
 module.exports = instantiateReactComponent;
 }).call(this,require('_process'))
-},{"./Object.assign":29,"./ReactCompositeComponent":40,"./ReactEmptyComponent":61,"./ReactNativeComponent":75,"_process":5,"fbjs/lib/invariant":151,"fbjs/lib/warning":162}],126:[function(require,module,exports){
+},{"./Object.assign":36,"./ReactCompositeComponent":47,"./ReactEmptyComponent":68,"./ReactNativeComponent":82,"_process":7,"fbjs/lib/invariant":158,"fbjs/lib/warning":169}],133:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -47166,7 +52365,7 @@ function isEventSupported(eventNameSuffix, capture) {
 }
 
 module.exports = isEventSupported;
-},{"fbjs/lib/ExecutionEnvironment":137}],127:[function(require,module,exports){
+},{"fbjs/lib/ExecutionEnvironment":144}],134:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -47207,7 +52406,7 @@ function isTextInputElement(elem) {
 }
 
 module.exports = isTextInputElement;
-},{}],128:[function(require,module,exports){
+},{}],135:[function(require,module,exports){
 (function (process){
 /**
  * Copyright 2013-2015, Facebook, Inc.
@@ -47243,7 +52442,7 @@ function onlyChild(children) {
 
 module.exports = onlyChild;
 }).call(this,require('_process'))
-},{"./ReactElement":59,"_process":5,"fbjs/lib/invariant":151}],129:[function(require,module,exports){
+},{"./ReactElement":66,"_process":7,"fbjs/lib/invariant":158}],136:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -47270,7 +52469,7 @@ function quoteAttributeValueForBrowser(value) {
 }
 
 module.exports = quoteAttributeValueForBrowser;
-},{"./escapeTextContentForBrowser":114}],130:[function(require,module,exports){
+},{"./escapeTextContentForBrowser":121}],137:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -47287,7 +52486,7 @@ module.exports = quoteAttributeValueForBrowser;
 var ReactMount = require('./ReactMount');
 
 module.exports = ReactMount.renderSubtreeIntoContainer;
-},{"./ReactMount":72}],131:[function(require,module,exports){
+},{"./ReactMount":79}],138:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -47378,7 +52577,7 @@ if (ExecutionEnvironment.canUseDOM) {
 }
 
 module.exports = setInnerHTML;
-},{"fbjs/lib/ExecutionEnvironment":137}],132:[function(require,module,exports){
+},{"fbjs/lib/ExecutionEnvironment":144}],139:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -47419,7 +52618,7 @@ if (ExecutionEnvironment.canUseDOM) {
 }
 
 module.exports = setTextContent;
-},{"./escapeTextContentForBrowser":114,"./setInnerHTML":131,"fbjs/lib/ExecutionEnvironment":137}],133:[function(require,module,exports){
+},{"./escapeTextContentForBrowser":121,"./setInnerHTML":138,"fbjs/lib/ExecutionEnvironment":144}],140:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -47463,7 +52662,7 @@ function shouldUpdateReactComponent(prevElement, nextElement) {
 }
 
 module.exports = shouldUpdateReactComponent;
-},{}],134:[function(require,module,exports){
+},{}],141:[function(require,module,exports){
 (function (process){
 /**
  * Copyright 2013-2015, Facebook, Inc.
@@ -47655,7 +52854,7 @@ function traverseAllChildren(children, callback, traverseContext) {
 
 module.exports = traverseAllChildren;
 }).call(this,require('_process'))
-},{"./ReactCurrentOwner":41,"./ReactElement":59,"./ReactInstanceHandles":68,"./getIteratorFn":122,"_process":5,"fbjs/lib/invariant":151,"fbjs/lib/warning":162}],135:[function(require,module,exports){
+},{"./ReactCurrentOwner":48,"./ReactElement":66,"./ReactInstanceHandles":75,"./getIteratorFn":129,"_process":7,"fbjs/lib/invariant":158,"fbjs/lib/warning":169}],142:[function(require,module,exports){
 (function (process){
 /**
  * Copyright 2015, Facebook, Inc.
@@ -48021,7 +53220,7 @@ if (process.env.NODE_ENV !== 'production') {
 
 module.exports = validateDOMNesting;
 }).call(this,require('_process'))
-},{"./Object.assign":29,"_process":5,"fbjs/lib/emptyFunction":143,"fbjs/lib/warning":162}],136:[function(require,module,exports){
+},{"./Object.assign":36,"_process":7,"fbjs/lib/emptyFunction":150,"fbjs/lib/warning":169}],143:[function(require,module,exports){
 (function (process){
 /**
  * Copyright 2013-2015, Facebook, Inc.
@@ -48108,7 +53307,7 @@ var EventListener = {
 
 module.exports = EventListener;
 }).call(this,require('_process'))
-},{"./emptyFunction":143,"_process":5}],137:[function(require,module,exports){
+},{"./emptyFunction":150,"_process":7}],144:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -48145,7 +53344,7 @@ var ExecutionEnvironment = {
 };
 
 module.exports = ExecutionEnvironment;
-},{}],138:[function(require,module,exports){
+},{}],145:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -48178,7 +53377,7 @@ function camelize(string) {
 }
 
 module.exports = camelize;
-},{}],139:[function(require,module,exports){
+},{}],146:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -48219,7 +53418,7 @@ function camelizeStyleName(string) {
 }
 
 module.exports = camelizeStyleName;
-},{"./camelize":138}],140:[function(require,module,exports){
+},{"./camelize":145}],147:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -48275,7 +53474,7 @@ function containsNode(_x, _x2) {
 }
 
 module.exports = containsNode;
-},{"./isTextNode":153}],141:[function(require,module,exports){
+},{"./isTextNode":160}],148:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -48361,7 +53560,7 @@ function createArrayFromMixed(obj) {
 }
 
 module.exports = createArrayFromMixed;
-},{"./toArray":161}],142:[function(require,module,exports){
+},{"./toArray":168}],149:[function(require,module,exports){
 (function (process){
 /**
  * Copyright 2013-2015, Facebook, Inc.
@@ -48448,7 +53647,7 @@ function createNodesFromMarkup(markup, handleScript) {
 
 module.exports = createNodesFromMarkup;
 }).call(this,require('_process'))
-},{"./ExecutionEnvironment":137,"./createArrayFromMixed":141,"./getMarkupWrap":147,"./invariant":151,"_process":5}],143:[function(require,module,exports){
+},{"./ExecutionEnvironment":144,"./createArrayFromMixed":148,"./getMarkupWrap":154,"./invariant":158,"_process":7}],150:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -48487,7 +53686,7 @@ emptyFunction.thatReturnsArgument = function (arg) {
 };
 
 module.exports = emptyFunction;
-},{}],144:[function(require,module,exports){
+},{}],151:[function(require,module,exports){
 (function (process){
 /**
  * Copyright 2013-2015, Facebook, Inc.
@@ -48510,7 +53709,7 @@ if (process.env.NODE_ENV !== 'production') {
 
 module.exports = emptyObject;
 }).call(this,require('_process'))
-},{"_process":5}],145:[function(require,module,exports){
+},{"_process":7}],152:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -48537,7 +53736,7 @@ function focusNode(node) {
 }
 
 module.exports = focusNode;
-},{}],146:[function(require,module,exports){
+},{}],153:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -48554,15 +53753,11 @@ module.exports = focusNode;
  * Same as document.activeElement but wraps in a try-catch block. In IE it is
  * not safe to call document.activeElement if there is nothing focused.
  *
- * The activeElement will be null only if the document or document body is not yet defined.
+ * The activeElement will be null only if the document body is not yet defined.
  */
-'use strict';
+"use strict";
 
 function getActiveElement() /*?DOMElement*/{
-  if (typeof document === 'undefined') {
-    return null;
-  }
-
   try {
     return document.activeElement || document.body;
   } catch (e) {
@@ -48571,7 +53766,7 @@ function getActiveElement() /*?DOMElement*/{
 }
 
 module.exports = getActiveElement;
-},{}],147:[function(require,module,exports){
+},{}],154:[function(require,module,exports){
 (function (process){
 /**
  * Copyright 2013-2015, Facebook, Inc.
@@ -48669,7 +53864,7 @@ function getMarkupWrap(nodeName) {
 
 module.exports = getMarkupWrap;
 }).call(this,require('_process'))
-},{"./ExecutionEnvironment":137,"./invariant":151,"_process":5}],148:[function(require,module,exports){
+},{"./ExecutionEnvironment":144,"./invariant":158,"_process":7}],155:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -48708,7 +53903,7 @@ function getUnboundedScrollPosition(scrollable) {
 }
 
 module.exports = getUnboundedScrollPosition;
-},{}],149:[function(require,module,exports){
+},{}],156:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -48742,7 +53937,7 @@ function hyphenate(string) {
 }
 
 module.exports = hyphenate;
-},{}],150:[function(require,module,exports){
+},{}],157:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -48782,7 +53977,7 @@ function hyphenateStyleName(string) {
 }
 
 module.exports = hyphenateStyleName;
-},{"./hyphenate":149}],151:[function(require,module,exports){
+},{"./hyphenate":156}],158:[function(require,module,exports){
 (function (process){
 /**
  * Copyright 2013-2015, Facebook, Inc.
@@ -48808,7 +54003,7 @@ module.exports = hyphenateStyleName;
  * will remain to ensure logic does not differ in production.
  */
 
-var invariant = function (condition, format, a, b, c, d, e, f) {
+function invariant(condition, format, a, b, c, d, e, f) {
   if (process.env.NODE_ENV !== 'production') {
     if (format === undefined) {
       throw new Error('invariant requires an error message argument');
@@ -48822,19 +54017,20 @@ var invariant = function (condition, format, a, b, c, d, e, f) {
     } else {
       var args = [a, b, c, d, e, f];
       var argIndex = 0;
-      error = new Error('Invariant Violation: ' + format.replace(/%s/g, function () {
+      error = new Error(format.replace(/%s/g, function () {
         return args[argIndex++];
       }));
+      error.name = 'Invariant Violation';
     }
 
     error.framesToPop = 1; // we don't care about invariant's own frame
     throw error;
   }
-};
+}
 
 module.exports = invariant;
 }).call(this,require('_process'))
-},{"_process":5}],152:[function(require,module,exports){
+},{"_process":7}],159:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -48858,7 +54054,7 @@ function isNode(object) {
 }
 
 module.exports = isNode;
-},{}],153:[function(require,module,exports){
+},{}],160:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -48884,7 +54080,7 @@ function isTextNode(object) {
 }
 
 module.exports = isTextNode;
-},{"./isNode":152}],154:[function(require,module,exports){
+},{"./isNode":159}],161:[function(require,module,exports){
 (function (process){
 /**
  * Copyright 2013-2015, Facebook, Inc.
@@ -48935,7 +54131,7 @@ var keyMirror = function (obj) {
 
 module.exports = keyMirror;
 }).call(this,require('_process'))
-},{"./invariant":151,"_process":5}],155:[function(require,module,exports){
+},{"./invariant":158,"_process":7}],162:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -48971,7 +54167,7 @@ var keyOf = function (oneKeyObj) {
 };
 
 module.exports = keyOf;
-},{}],156:[function(require,module,exports){
+},{}],163:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -49023,7 +54219,7 @@ function mapObject(object, callback, context) {
 }
 
 module.exports = mapObject;
-},{}],157:[function(require,module,exports){
+},{}],164:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -49055,7 +54251,7 @@ function memoizeStringOnly(callback) {
 }
 
 module.exports = memoizeStringOnly;
-},{}],158:[function(require,module,exports){
+},{}],165:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -49079,7 +54275,7 @@ if (ExecutionEnvironment.canUseDOM) {
 }
 
 module.exports = performance || {};
-},{"./ExecutionEnvironment":137}],159:[function(require,module,exports){
+},{"./ExecutionEnvironment":144}],166:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -49095,21 +54291,26 @@ module.exports = performance || {};
 'use strict';
 
 var performance = require('./performance');
-var curPerformance = performance;
+
+var performanceNow;
 
 /**
  * Detect if we can use `window.performance.now()` and gracefully fallback to
  * `Date.now()` if it doesn't exist. We need to support Firefox < 15 for now
  * because of Facebook's testing infrastructure.
  */
-if (!curPerformance || !curPerformance.now) {
-  curPerformance = Date;
+if (performance.now) {
+  performanceNow = function () {
+    return performance.now();
+  };
+} else {
+  performanceNow = function () {
+    return Date.now();
+  };
 }
 
-var performanceNow = curPerformance.now.bind(curPerformance);
-
 module.exports = performanceNow;
-},{"./performance":158}],160:[function(require,module,exports){
+},{"./performance":165}],167:[function(require,module,exports){
 /**
  * Copyright 2013-2015, Facebook, Inc.
  * All rights reserved.
@@ -49160,7 +54361,7 @@ function shallowEqual(objA, objB) {
 }
 
 module.exports = shallowEqual;
-},{}],161:[function(require,module,exports){
+},{}],168:[function(require,module,exports){
 (function (process){
 /**
  * Copyright 2013-2015, Facebook, Inc.
@@ -49220,7 +54421,7 @@ function toArray(obj) {
 
 module.exports = toArray;
 }).call(this,require('_process'))
-},{"./invariant":151,"_process":5}],162:[function(require,module,exports){
+},{"./invariant":158,"_process":7}],169:[function(require,module,exports){
 (function (process){
 /**
  * Copyright 2014-2015, Facebook, Inc.
@@ -49280,330 +54481,444 @@ if (process.env.NODE_ENV !== 'production') {
 
 module.exports = warning;
 }).call(this,require('_process'))
-},{"./emptyFunction":143,"_process":5}],163:[function(require,module,exports){
+},{"./emptyFunction":150,"_process":7}],170:[function(require,module,exports){
 'use strict';
 
 module.exports = require('./lib/React');
 
-},{"./lib/React":31}],164:[function(require,module,exports){
-arguments[4][8][0].apply(exports,arguments)
-},{"./ReactMount":228,"./findDOMNode":271,"dup":8,"fbjs/lib/focusNode":301}],165:[function(require,module,exports){
-arguments[4][9][0].apply(exports,arguments)
-},{"./EventConstants":177,"./EventPropagators":181,"./FallbackCompositionState":182,"./SyntheticCompositionEvent":253,"./SyntheticInputEvent":257,"dup":9,"fbjs/lib/ExecutionEnvironment":293,"fbjs/lib/keyOf":311}],166:[function(require,module,exports){
-arguments[4][10][0].apply(exports,arguments)
-},{"dup":10}],167:[function(require,module,exports){
-arguments[4][11][0].apply(exports,arguments)
-},{"./CSSProperty":166,"./ReactPerf":234,"./dangerousStyleValue":268,"_process":5,"dup":11,"fbjs/lib/ExecutionEnvironment":293,"fbjs/lib/camelizeStyleName":295,"fbjs/lib/hyphenateStyleName":306,"fbjs/lib/memoizeStringOnly":313,"fbjs/lib/warning":318}],168:[function(require,module,exports){
-arguments[4][12][0].apply(exports,arguments)
-},{"./Object.assign":185,"./PooledClass":186,"_process":5,"dup":12,"fbjs/lib/invariant":307}],169:[function(require,module,exports){
-arguments[4][13][0].apply(exports,arguments)
-},{"./EventConstants":177,"./EventPluginHub":178,"./EventPropagators":181,"./ReactUpdates":246,"./SyntheticEvent":255,"./getEventTarget":277,"./isEventSupported":282,"./isTextInputElement":283,"dup":13,"fbjs/lib/ExecutionEnvironment":293,"fbjs/lib/keyOf":311}],170:[function(require,module,exports){
-arguments[4][14][0].apply(exports,arguments)
-},{"dup":14}],171:[function(require,module,exports){
-arguments[4][15][0].apply(exports,arguments)
-},{"./Danger":174,"./ReactMultiChildUpdateTypes":230,"./ReactPerf":234,"./setInnerHTML":287,"./setTextContent":288,"_process":5,"dup":15,"fbjs/lib/invariant":307}],172:[function(require,module,exports){
-arguments[4][16][0].apply(exports,arguments)
-},{"_process":5,"dup":16,"fbjs/lib/invariant":307}],173:[function(require,module,exports){
-arguments[4][17][0].apply(exports,arguments)
-},{"./DOMProperty":172,"./ReactPerf":234,"./quoteAttributeValueForBrowser":285,"_process":5,"dup":17,"fbjs/lib/warning":318}],174:[function(require,module,exports){
-arguments[4][18][0].apply(exports,arguments)
-},{"_process":5,"dup":18,"fbjs/lib/ExecutionEnvironment":293,"fbjs/lib/createNodesFromMarkup":298,"fbjs/lib/emptyFunction":299,"fbjs/lib/getMarkupWrap":303,"fbjs/lib/invariant":307}],175:[function(require,module,exports){
-arguments[4][19][0].apply(exports,arguments)
-},{"dup":19,"fbjs/lib/keyOf":311}],176:[function(require,module,exports){
-arguments[4][20][0].apply(exports,arguments)
-},{"./EventConstants":177,"./EventPropagators":181,"./ReactMount":228,"./SyntheticMouseEvent":259,"dup":20,"fbjs/lib/keyOf":311}],177:[function(require,module,exports){
-arguments[4][21][0].apply(exports,arguments)
-},{"dup":21,"fbjs/lib/keyMirror":310}],178:[function(require,module,exports){
-arguments[4][22][0].apply(exports,arguments)
-},{"./EventPluginRegistry":179,"./EventPluginUtils":180,"./ReactErrorUtils":219,"./accumulateInto":265,"./forEachAccumulated":273,"_process":5,"dup":22,"fbjs/lib/invariant":307,"fbjs/lib/warning":318}],179:[function(require,module,exports){
-arguments[4][23][0].apply(exports,arguments)
-},{"_process":5,"dup":23,"fbjs/lib/invariant":307}],180:[function(require,module,exports){
-arguments[4][24][0].apply(exports,arguments)
-},{"./EventConstants":177,"./ReactErrorUtils":219,"_process":5,"dup":24,"fbjs/lib/invariant":307,"fbjs/lib/warning":318}],181:[function(require,module,exports){
-arguments[4][25][0].apply(exports,arguments)
-},{"./EventConstants":177,"./EventPluginHub":178,"./accumulateInto":265,"./forEachAccumulated":273,"_process":5,"dup":25,"fbjs/lib/warning":318}],182:[function(require,module,exports){
-arguments[4][26][0].apply(exports,arguments)
-},{"./Object.assign":185,"./PooledClass":186,"./getTextContentAccessor":280,"dup":26}],183:[function(require,module,exports){
-arguments[4][27][0].apply(exports,arguments)
-},{"./DOMProperty":172,"dup":27,"fbjs/lib/ExecutionEnvironment":293}],184:[function(require,module,exports){
-arguments[4][28][0].apply(exports,arguments)
-},{"./ReactPropTypeLocations":236,"./ReactPropTypes":237,"_process":5,"dup":28,"fbjs/lib/invariant":307,"fbjs/lib/warning":318}],185:[function(require,module,exports){
-arguments[4][29][0].apply(exports,arguments)
-},{"dup":29}],186:[function(require,module,exports){
-arguments[4][30][0].apply(exports,arguments)
-},{"_process":5,"dup":30,"fbjs/lib/invariant":307}],187:[function(require,module,exports){
-arguments[4][31][0].apply(exports,arguments)
-},{"./Object.assign":185,"./ReactDOM":198,"./ReactDOMServer":208,"./ReactIsomorphic":226,"./deprecated":269,"dup":31}],188:[function(require,module,exports){
-arguments[4][32][0].apply(exports,arguments)
-},{"./ReactInstanceMap":225,"./findDOMNode":271,"_process":5,"dup":32,"fbjs/lib/warning":318}],189:[function(require,module,exports){
-arguments[4][33][0].apply(exports,arguments)
-},{"./EventConstants":177,"./EventPluginHub":178,"./EventPluginRegistry":179,"./Object.assign":185,"./ReactEventEmitterMixin":220,"./ReactPerf":234,"./ViewportMetrics":264,"./isEventSupported":282,"dup":33}],190:[function(require,module,exports){
-arguments[4][34][0].apply(exports,arguments)
-},{"./ReactReconciler":239,"./instantiateReactComponent":281,"./shouldUpdateReactComponent":289,"./traverseAllChildren":290,"_process":5,"dup":34,"fbjs/lib/warning":318}],191:[function(require,module,exports){
-arguments[4][35][0].apply(exports,arguments)
-},{"./PooledClass":186,"./ReactElement":215,"./traverseAllChildren":290,"dup":35,"fbjs/lib/emptyFunction":299}],192:[function(require,module,exports){
-arguments[4][36][0].apply(exports,arguments)
-},{"./Object.assign":185,"./ReactComponent":193,"./ReactElement":215,"./ReactNoopUpdateQueue":232,"./ReactPropTypeLocationNames":235,"./ReactPropTypeLocations":236,"_process":5,"dup":36,"fbjs/lib/emptyObject":300,"fbjs/lib/invariant":307,"fbjs/lib/keyMirror":310,"fbjs/lib/keyOf":311,"fbjs/lib/warning":318}],193:[function(require,module,exports){
-arguments[4][37][0].apply(exports,arguments)
-},{"./ReactNoopUpdateQueue":232,"./canDefineProperty":267,"_process":5,"dup":37,"fbjs/lib/emptyObject":300,"fbjs/lib/invariant":307,"fbjs/lib/warning":318}],194:[function(require,module,exports){
-arguments[4][38][0].apply(exports,arguments)
-},{"./ReactDOMIDOperations":203,"./ReactMount":228,"dup":38}],195:[function(require,module,exports){
-arguments[4][39][0].apply(exports,arguments)
-},{"_process":5,"dup":39,"fbjs/lib/invariant":307}],196:[function(require,module,exports){
-arguments[4][40][0].apply(exports,arguments)
-},{"./Object.assign":185,"./ReactComponentEnvironment":195,"./ReactCurrentOwner":197,"./ReactElement":215,"./ReactInstanceMap":225,"./ReactPerf":234,"./ReactPropTypeLocationNames":235,"./ReactPropTypeLocations":236,"./ReactReconciler":239,"./ReactUpdateQueue":245,"./shouldUpdateReactComponent":289,"_process":5,"dup":40,"fbjs/lib/emptyObject":300,"fbjs/lib/invariant":307,"fbjs/lib/warning":318}],197:[function(require,module,exports){
-arguments[4][41][0].apply(exports,arguments)
-},{"dup":41}],198:[function(require,module,exports){
-arguments[4][42][0].apply(exports,arguments)
-},{"./ReactCurrentOwner":197,"./ReactDOMTextComponent":209,"./ReactDefaultInjection":212,"./ReactInstanceHandles":224,"./ReactMount":228,"./ReactPerf":234,"./ReactReconciler":239,"./ReactUpdates":246,"./ReactVersion":247,"./findDOMNode":271,"./renderSubtreeIntoContainer":286,"_process":5,"dup":42,"fbjs/lib/ExecutionEnvironment":293,"fbjs/lib/warning":318}],199:[function(require,module,exports){
-arguments[4][43][0].apply(exports,arguments)
-},{"dup":43}],200:[function(require,module,exports){
-arguments[4][44][0].apply(exports,arguments)
-},{"./AutoFocusUtils":164,"./CSSPropertyOperations":167,"./DOMProperty":172,"./DOMPropertyOperations":173,"./EventConstants":177,"./Object.assign":185,"./ReactBrowserEventEmitter":189,"./ReactComponentBrowserEnvironment":194,"./ReactDOMButton":199,"./ReactDOMInput":204,"./ReactDOMOption":205,"./ReactDOMSelect":206,"./ReactDOMTextarea":210,"./ReactMount":228,"./ReactMultiChild":229,"./ReactPerf":234,"./ReactUpdateQueue":245,"./canDefineProperty":267,"./escapeTextContentForBrowser":270,"./isEventSupported":282,"./setInnerHTML":287,"./setTextContent":288,"./validateDOMNesting":291,"_process":5,"dup":44,"fbjs/lib/invariant":307,"fbjs/lib/keyOf":311,"fbjs/lib/shallowEqual":316,"fbjs/lib/warning":318}],201:[function(require,module,exports){
-arguments[4][45][0].apply(exports,arguments)
-},{"./ReactElement":215,"./ReactElementValidator":216,"_process":5,"dup":45,"fbjs/lib/mapObject":312}],202:[function(require,module,exports){
-arguments[4][46][0].apply(exports,arguments)
-},{"dup":46}],203:[function(require,module,exports){
-arguments[4][47][0].apply(exports,arguments)
-},{"./DOMChildrenOperations":171,"./DOMPropertyOperations":173,"./ReactMount":228,"./ReactPerf":234,"_process":5,"dup":47,"fbjs/lib/invariant":307}],204:[function(require,module,exports){
-arguments[4][48][0].apply(exports,arguments)
-},{"./LinkedValueUtils":184,"./Object.assign":185,"./ReactDOMIDOperations":203,"./ReactMount":228,"./ReactUpdates":246,"_process":5,"dup":48,"fbjs/lib/invariant":307}],205:[function(require,module,exports){
-arguments[4][49][0].apply(exports,arguments)
-},{"./Object.assign":185,"./ReactChildren":191,"./ReactDOMSelect":206,"_process":5,"dup":49,"fbjs/lib/warning":318}],206:[function(require,module,exports){
-arguments[4][50][0].apply(exports,arguments)
-},{"./LinkedValueUtils":184,"./Object.assign":185,"./ReactMount":228,"./ReactUpdates":246,"_process":5,"dup":50,"fbjs/lib/warning":318}],207:[function(require,module,exports){
-arguments[4][51][0].apply(exports,arguments)
-},{"./getNodeForCharacterOffset":279,"./getTextContentAccessor":280,"dup":51,"fbjs/lib/ExecutionEnvironment":293}],208:[function(require,module,exports){
-arguments[4][52][0].apply(exports,arguments)
-},{"./ReactDefaultInjection":212,"./ReactServerRendering":243,"./ReactVersion":247,"dup":52}],209:[function(require,module,exports){
-arguments[4][53][0].apply(exports,arguments)
-},{"./DOMChildrenOperations":171,"./DOMPropertyOperations":173,"./Object.assign":185,"./ReactComponentBrowserEnvironment":194,"./ReactMount":228,"./escapeTextContentForBrowser":270,"./setTextContent":288,"./validateDOMNesting":291,"_process":5,"dup":53}],210:[function(require,module,exports){
-arguments[4][54][0].apply(exports,arguments)
-},{"./LinkedValueUtils":184,"./Object.assign":185,"./ReactDOMIDOperations":203,"./ReactUpdates":246,"_process":5,"dup":54,"fbjs/lib/invariant":307,"fbjs/lib/warning":318}],211:[function(require,module,exports){
-arguments[4][55][0].apply(exports,arguments)
-},{"./Object.assign":185,"./ReactUpdates":246,"./Transaction":263,"dup":55,"fbjs/lib/emptyFunction":299}],212:[function(require,module,exports){
-arguments[4][56][0].apply(exports,arguments)
-},{"./BeforeInputEventPlugin":165,"./ChangeEventPlugin":169,"./ClientReactRootIndex":170,"./DefaultEventPluginOrder":175,"./EnterLeaveEventPlugin":176,"./HTMLDOMPropertyConfig":183,"./ReactBrowserComponentMixin":188,"./ReactComponentBrowserEnvironment":194,"./ReactDOMComponent":200,"./ReactDOMTextComponent":209,"./ReactDefaultBatchingStrategy":211,"./ReactDefaultPerf":213,"./ReactEventListener":221,"./ReactInjection":222,"./ReactInstanceHandles":224,"./ReactMount":228,"./ReactReconcileTransaction":238,"./SVGDOMPropertyConfig":248,"./SelectEventPlugin":249,"./ServerReactRootIndex":250,"./SimpleEventPlugin":251,"_process":5,"dup":56,"fbjs/lib/ExecutionEnvironment":293}],213:[function(require,module,exports){
-arguments[4][57][0].apply(exports,arguments)
-},{"./DOMProperty":172,"./ReactDefaultPerfAnalysis":214,"./ReactMount":228,"./ReactPerf":234,"dup":57,"fbjs/lib/performanceNow":315}],214:[function(require,module,exports){
-arguments[4][58][0].apply(exports,arguments)
-},{"./Object.assign":185,"dup":58}],215:[function(require,module,exports){
-arguments[4][59][0].apply(exports,arguments)
-},{"./Object.assign":185,"./ReactCurrentOwner":197,"./canDefineProperty":267,"_process":5,"dup":59}],216:[function(require,module,exports){
-arguments[4][60][0].apply(exports,arguments)
-},{"./ReactCurrentOwner":197,"./ReactElement":215,"./ReactPropTypeLocationNames":235,"./ReactPropTypeLocations":236,"./canDefineProperty":267,"./getIteratorFn":278,"_process":5,"dup":60,"fbjs/lib/invariant":307,"fbjs/lib/warning":318}],217:[function(require,module,exports){
-arguments[4][61][0].apply(exports,arguments)
-},{"./Object.assign":185,"./ReactElement":215,"./ReactEmptyComponentRegistry":218,"./ReactReconciler":239,"dup":61}],218:[function(require,module,exports){
-arguments[4][62][0].apply(exports,arguments)
-},{"dup":62}],219:[function(require,module,exports){
-arguments[4][63][0].apply(exports,arguments)
-},{"_process":5,"dup":63}],220:[function(require,module,exports){
-arguments[4][64][0].apply(exports,arguments)
-},{"./EventPluginHub":178,"dup":64}],221:[function(require,module,exports){
-arguments[4][65][0].apply(exports,arguments)
-},{"./Object.assign":185,"./PooledClass":186,"./ReactInstanceHandles":224,"./ReactMount":228,"./ReactUpdates":246,"./getEventTarget":277,"dup":65,"fbjs/lib/EventListener":292,"fbjs/lib/ExecutionEnvironment":293,"fbjs/lib/getUnboundedScrollPosition":304}],222:[function(require,module,exports){
-arguments[4][66][0].apply(exports,arguments)
-},{"./DOMProperty":172,"./EventPluginHub":178,"./ReactBrowserEventEmitter":189,"./ReactClass":192,"./ReactComponentEnvironment":195,"./ReactEmptyComponent":217,"./ReactNativeComponent":231,"./ReactPerf":234,"./ReactRootIndex":241,"./ReactUpdates":246,"dup":66}],223:[function(require,module,exports){
-arguments[4][67][0].apply(exports,arguments)
-},{"./ReactDOMSelection":207,"dup":67,"fbjs/lib/containsNode":296,"fbjs/lib/focusNode":301,"fbjs/lib/getActiveElement":302}],224:[function(require,module,exports){
-arguments[4][68][0].apply(exports,arguments)
-},{"./ReactRootIndex":241,"_process":5,"dup":68,"fbjs/lib/invariant":307}],225:[function(require,module,exports){
-arguments[4][69][0].apply(exports,arguments)
-},{"dup":69}],226:[function(require,module,exports){
-arguments[4][70][0].apply(exports,arguments)
-},{"./Object.assign":185,"./ReactChildren":191,"./ReactClass":192,"./ReactComponent":193,"./ReactDOMFactories":201,"./ReactElement":215,"./ReactElementValidator":216,"./ReactPropTypes":237,"./ReactVersion":247,"./onlyChild":284,"_process":5,"dup":70}],227:[function(require,module,exports){
-arguments[4][71][0].apply(exports,arguments)
-},{"./adler32":266,"dup":71}],228:[function(require,module,exports){
-arguments[4][72][0].apply(exports,arguments)
-},{"./DOMProperty":172,"./Object.assign":185,"./ReactBrowserEventEmitter":189,"./ReactCurrentOwner":197,"./ReactDOMFeatureFlags":202,"./ReactElement":215,"./ReactEmptyComponentRegistry":218,"./ReactInstanceHandles":224,"./ReactInstanceMap":225,"./ReactMarkupChecksum":227,"./ReactPerf":234,"./ReactReconciler":239,"./ReactUpdateQueue":245,"./ReactUpdates":246,"./instantiateReactComponent":281,"./setInnerHTML":287,"./shouldUpdateReactComponent":289,"./validateDOMNesting":291,"_process":5,"dup":72,"fbjs/lib/containsNode":296,"fbjs/lib/emptyObject":300,"fbjs/lib/invariant":307,"fbjs/lib/warning":318}],229:[function(require,module,exports){
-arguments[4][73][0].apply(exports,arguments)
-},{"./ReactChildReconciler":190,"./ReactComponentEnvironment":195,"./ReactCurrentOwner":197,"./ReactMultiChildUpdateTypes":230,"./ReactReconciler":239,"./flattenChildren":272,"_process":5,"dup":73}],230:[function(require,module,exports){
-arguments[4][74][0].apply(exports,arguments)
-},{"dup":74,"fbjs/lib/keyMirror":310}],231:[function(require,module,exports){
-arguments[4][75][0].apply(exports,arguments)
-},{"./Object.assign":185,"_process":5,"dup":75,"fbjs/lib/invariant":307}],232:[function(require,module,exports){
-arguments[4][76][0].apply(exports,arguments)
-},{"_process":5,"dup":76,"fbjs/lib/warning":318}],233:[function(require,module,exports){
-arguments[4][77][0].apply(exports,arguments)
-},{"_process":5,"dup":77,"fbjs/lib/invariant":307}],234:[function(require,module,exports){
-arguments[4][78][0].apply(exports,arguments)
-},{"_process":5,"dup":78}],235:[function(require,module,exports){
-arguments[4][79][0].apply(exports,arguments)
-},{"_process":5,"dup":79}],236:[function(require,module,exports){
-arguments[4][80][0].apply(exports,arguments)
-},{"dup":80,"fbjs/lib/keyMirror":310}],237:[function(require,module,exports){
-arguments[4][81][0].apply(exports,arguments)
-},{"./ReactElement":215,"./ReactPropTypeLocationNames":235,"./getIteratorFn":278,"dup":81,"fbjs/lib/emptyFunction":299}],238:[function(require,module,exports){
-arguments[4][82][0].apply(exports,arguments)
-},{"./CallbackQueue":168,"./Object.assign":185,"./PooledClass":186,"./ReactBrowserEventEmitter":189,"./ReactDOMFeatureFlags":202,"./ReactInputSelection":223,"./Transaction":263,"dup":82}],239:[function(require,module,exports){
-arguments[4][83][0].apply(exports,arguments)
-},{"./ReactRef":240,"dup":83}],240:[function(require,module,exports){
-arguments[4][84][0].apply(exports,arguments)
-},{"./ReactOwner":233,"dup":84}],241:[function(require,module,exports){
-arguments[4][85][0].apply(exports,arguments)
-},{"dup":85}],242:[function(require,module,exports){
-arguments[4][86][0].apply(exports,arguments)
-},{"dup":86}],243:[function(require,module,exports){
-arguments[4][87][0].apply(exports,arguments)
-},{"./ReactDefaultBatchingStrategy":211,"./ReactElement":215,"./ReactInstanceHandles":224,"./ReactMarkupChecksum":227,"./ReactServerBatchingStrategy":242,"./ReactServerRenderingTransaction":244,"./ReactUpdates":246,"./instantiateReactComponent":281,"_process":5,"dup":87,"fbjs/lib/emptyObject":300,"fbjs/lib/invariant":307}],244:[function(require,module,exports){
-arguments[4][88][0].apply(exports,arguments)
-},{"./CallbackQueue":168,"./Object.assign":185,"./PooledClass":186,"./Transaction":263,"dup":88,"fbjs/lib/emptyFunction":299}],245:[function(require,module,exports){
-arguments[4][89][0].apply(exports,arguments)
-},{"./Object.assign":185,"./ReactCurrentOwner":197,"./ReactElement":215,"./ReactInstanceMap":225,"./ReactUpdates":246,"_process":5,"dup":89,"fbjs/lib/invariant":307,"fbjs/lib/warning":318}],246:[function(require,module,exports){
-arguments[4][90][0].apply(exports,arguments)
-},{"./CallbackQueue":168,"./Object.assign":185,"./PooledClass":186,"./ReactPerf":234,"./ReactReconciler":239,"./Transaction":263,"_process":5,"dup":90,"fbjs/lib/invariant":307}],247:[function(require,module,exports){
-arguments[4][91][0].apply(exports,arguments)
-},{"dup":91}],248:[function(require,module,exports){
-arguments[4][92][0].apply(exports,arguments)
-},{"./DOMProperty":172,"dup":92}],249:[function(require,module,exports){
-arguments[4][93][0].apply(exports,arguments)
-},{"./EventConstants":177,"./EventPropagators":181,"./ReactInputSelection":223,"./SyntheticEvent":255,"./isTextInputElement":283,"dup":93,"fbjs/lib/ExecutionEnvironment":293,"fbjs/lib/getActiveElement":302,"fbjs/lib/keyOf":311,"fbjs/lib/shallowEqual":316}],250:[function(require,module,exports){
-arguments[4][94][0].apply(exports,arguments)
-},{"dup":94}],251:[function(require,module,exports){
-arguments[4][95][0].apply(exports,arguments)
-},{"./EventConstants":177,"./EventPropagators":181,"./ReactMount":228,"./SyntheticClipboardEvent":252,"./SyntheticDragEvent":254,"./SyntheticEvent":255,"./SyntheticFocusEvent":256,"./SyntheticKeyboardEvent":258,"./SyntheticMouseEvent":259,"./SyntheticTouchEvent":260,"./SyntheticUIEvent":261,"./SyntheticWheelEvent":262,"./getEventCharCode":274,"_process":5,"dup":95,"fbjs/lib/EventListener":292,"fbjs/lib/emptyFunction":299,"fbjs/lib/invariant":307,"fbjs/lib/keyOf":311}],252:[function(require,module,exports){
-arguments[4][96][0].apply(exports,arguments)
-},{"./SyntheticEvent":255,"dup":96}],253:[function(require,module,exports){
-arguments[4][97][0].apply(exports,arguments)
-},{"./SyntheticEvent":255,"dup":97}],254:[function(require,module,exports){
-arguments[4][98][0].apply(exports,arguments)
-},{"./SyntheticMouseEvent":259,"dup":98}],255:[function(require,module,exports){
-arguments[4][99][0].apply(exports,arguments)
-},{"./Object.assign":185,"./PooledClass":186,"_process":5,"dup":99,"fbjs/lib/emptyFunction":299,"fbjs/lib/warning":318}],256:[function(require,module,exports){
-arguments[4][100][0].apply(exports,arguments)
-},{"./SyntheticUIEvent":261,"dup":100}],257:[function(require,module,exports){
-arguments[4][101][0].apply(exports,arguments)
-},{"./SyntheticEvent":255,"dup":101}],258:[function(require,module,exports){
-arguments[4][102][0].apply(exports,arguments)
-},{"./SyntheticUIEvent":261,"./getEventCharCode":274,"./getEventKey":275,"./getEventModifierState":276,"dup":102}],259:[function(require,module,exports){
-arguments[4][103][0].apply(exports,arguments)
-},{"./SyntheticUIEvent":261,"./ViewportMetrics":264,"./getEventModifierState":276,"dup":103}],260:[function(require,module,exports){
-arguments[4][104][0].apply(exports,arguments)
-},{"./SyntheticUIEvent":261,"./getEventModifierState":276,"dup":104}],261:[function(require,module,exports){
-arguments[4][105][0].apply(exports,arguments)
-},{"./SyntheticEvent":255,"./getEventTarget":277,"dup":105}],262:[function(require,module,exports){
-arguments[4][106][0].apply(exports,arguments)
-},{"./SyntheticMouseEvent":259,"dup":106}],263:[function(require,module,exports){
-arguments[4][107][0].apply(exports,arguments)
-},{"_process":5,"dup":107,"fbjs/lib/invariant":307}],264:[function(require,module,exports){
-arguments[4][108][0].apply(exports,arguments)
-},{"dup":108}],265:[function(require,module,exports){
-arguments[4][109][0].apply(exports,arguments)
-},{"_process":5,"dup":109,"fbjs/lib/invariant":307}],266:[function(require,module,exports){
-arguments[4][110][0].apply(exports,arguments)
-},{"dup":110}],267:[function(require,module,exports){
-arguments[4][111][0].apply(exports,arguments)
-},{"_process":5,"dup":111}],268:[function(require,module,exports){
-arguments[4][112][0].apply(exports,arguments)
-},{"./CSSProperty":166,"dup":112}],269:[function(require,module,exports){
-arguments[4][113][0].apply(exports,arguments)
-},{"./Object.assign":185,"_process":5,"dup":113,"fbjs/lib/warning":318}],270:[function(require,module,exports){
-arguments[4][114][0].apply(exports,arguments)
-},{"dup":114}],271:[function(require,module,exports){
-arguments[4][115][0].apply(exports,arguments)
-},{"./ReactCurrentOwner":197,"./ReactInstanceMap":225,"./ReactMount":228,"_process":5,"dup":115,"fbjs/lib/invariant":307,"fbjs/lib/warning":318}],272:[function(require,module,exports){
-arguments[4][116][0].apply(exports,arguments)
-},{"./traverseAllChildren":290,"_process":5,"dup":116,"fbjs/lib/warning":318}],273:[function(require,module,exports){
-arguments[4][117][0].apply(exports,arguments)
-},{"dup":117}],274:[function(require,module,exports){
-arguments[4][118][0].apply(exports,arguments)
-},{"dup":118}],275:[function(require,module,exports){
-arguments[4][119][0].apply(exports,arguments)
-},{"./getEventCharCode":274,"dup":119}],276:[function(require,module,exports){
-arguments[4][120][0].apply(exports,arguments)
-},{"dup":120}],277:[function(require,module,exports){
-arguments[4][121][0].apply(exports,arguments)
-},{"dup":121}],278:[function(require,module,exports){
-arguments[4][122][0].apply(exports,arguments)
-},{"dup":122}],279:[function(require,module,exports){
-arguments[4][123][0].apply(exports,arguments)
-},{"dup":123}],280:[function(require,module,exports){
-arguments[4][124][0].apply(exports,arguments)
-},{"dup":124,"fbjs/lib/ExecutionEnvironment":293}],281:[function(require,module,exports){
-arguments[4][125][0].apply(exports,arguments)
-},{"./Object.assign":185,"./ReactCompositeComponent":196,"./ReactEmptyComponent":217,"./ReactNativeComponent":231,"_process":5,"dup":125,"fbjs/lib/invariant":307,"fbjs/lib/warning":318}],282:[function(require,module,exports){
-arguments[4][126][0].apply(exports,arguments)
-},{"dup":126,"fbjs/lib/ExecutionEnvironment":293}],283:[function(require,module,exports){
-arguments[4][127][0].apply(exports,arguments)
-},{"dup":127}],284:[function(require,module,exports){
-arguments[4][128][0].apply(exports,arguments)
-},{"./ReactElement":215,"_process":5,"dup":128,"fbjs/lib/invariant":307}],285:[function(require,module,exports){
-arguments[4][129][0].apply(exports,arguments)
-},{"./escapeTextContentForBrowser":270,"dup":129}],286:[function(require,module,exports){
-arguments[4][130][0].apply(exports,arguments)
-},{"./ReactMount":228,"dup":130}],287:[function(require,module,exports){
-arguments[4][131][0].apply(exports,arguments)
-},{"dup":131,"fbjs/lib/ExecutionEnvironment":293}],288:[function(require,module,exports){
-arguments[4][132][0].apply(exports,arguments)
-},{"./escapeTextContentForBrowser":270,"./setInnerHTML":287,"dup":132,"fbjs/lib/ExecutionEnvironment":293}],289:[function(require,module,exports){
-arguments[4][133][0].apply(exports,arguments)
-},{"dup":133}],290:[function(require,module,exports){
-arguments[4][134][0].apply(exports,arguments)
-},{"./ReactCurrentOwner":197,"./ReactElement":215,"./ReactInstanceHandles":224,"./getIteratorFn":278,"_process":5,"dup":134,"fbjs/lib/invariant":307,"fbjs/lib/warning":318}],291:[function(require,module,exports){
-arguments[4][135][0].apply(exports,arguments)
-},{"./Object.assign":185,"_process":5,"dup":135,"fbjs/lib/emptyFunction":299,"fbjs/lib/warning":318}],292:[function(require,module,exports){
-arguments[4][136][0].apply(exports,arguments)
-},{"./emptyFunction":299,"_process":5,"dup":136}],293:[function(require,module,exports){
-arguments[4][137][0].apply(exports,arguments)
-},{"dup":137}],294:[function(require,module,exports){
-arguments[4][138][0].apply(exports,arguments)
-},{"dup":138}],295:[function(require,module,exports){
-arguments[4][139][0].apply(exports,arguments)
-},{"./camelize":294,"dup":139}],296:[function(require,module,exports){
-arguments[4][140][0].apply(exports,arguments)
-},{"./isTextNode":309,"dup":140}],297:[function(require,module,exports){
-arguments[4][141][0].apply(exports,arguments)
-},{"./toArray":317,"dup":141}],298:[function(require,module,exports){
-arguments[4][142][0].apply(exports,arguments)
-},{"./ExecutionEnvironment":293,"./createArrayFromMixed":297,"./getMarkupWrap":303,"./invariant":307,"_process":5,"dup":142}],299:[function(require,module,exports){
-arguments[4][143][0].apply(exports,arguments)
-},{"dup":143}],300:[function(require,module,exports){
-arguments[4][144][0].apply(exports,arguments)
-},{"_process":5,"dup":144}],301:[function(require,module,exports){
-arguments[4][145][0].apply(exports,arguments)
-},{"dup":145}],302:[function(require,module,exports){
-arguments[4][146][0].apply(exports,arguments)
-},{"dup":146}],303:[function(require,module,exports){
-arguments[4][147][0].apply(exports,arguments)
-},{"./ExecutionEnvironment":293,"./invariant":307,"_process":5,"dup":147}],304:[function(require,module,exports){
-arguments[4][148][0].apply(exports,arguments)
-},{"dup":148}],305:[function(require,module,exports){
-arguments[4][149][0].apply(exports,arguments)
-},{"dup":149}],306:[function(require,module,exports){
-arguments[4][150][0].apply(exports,arguments)
-},{"./hyphenate":305,"dup":150}],307:[function(require,module,exports){
-arguments[4][151][0].apply(exports,arguments)
-},{"_process":5,"dup":151}],308:[function(require,module,exports){
-arguments[4][152][0].apply(exports,arguments)
-},{"dup":152}],309:[function(require,module,exports){
-arguments[4][153][0].apply(exports,arguments)
-},{"./isNode":308,"dup":153}],310:[function(require,module,exports){
-arguments[4][154][0].apply(exports,arguments)
-},{"./invariant":307,"_process":5,"dup":154}],311:[function(require,module,exports){
-arguments[4][155][0].apply(exports,arguments)
-},{"dup":155}],312:[function(require,module,exports){
-arguments[4][156][0].apply(exports,arguments)
-},{"dup":156}],313:[function(require,module,exports){
-arguments[4][157][0].apply(exports,arguments)
-},{"dup":157}],314:[function(require,module,exports){
-arguments[4][158][0].apply(exports,arguments)
-},{"./ExecutionEnvironment":293,"dup":158}],315:[function(require,module,exports){
-arguments[4][159][0].apply(exports,arguments)
-},{"./performance":314,"dup":159}],316:[function(require,module,exports){
-arguments[4][160][0].apply(exports,arguments)
-},{"dup":160}],317:[function(require,module,exports){
-arguments[4][161][0].apply(exports,arguments)
-},{"./invariant":307,"_process":5,"dup":161}],318:[function(require,module,exports){
-arguments[4][162][0].apply(exports,arguments)
-},{"./emptyFunction":299,"_process":5,"dup":162}],319:[function(require,module,exports){
-arguments[4][163][0].apply(exports,arguments)
-},{"./lib/React":187,"dup":163}],320:[function(require,module,exports){
+},{"./lib/React":38}],171:[function(require,module,exports){
+(function (root, factory) {
+  if (typeof exports === 'object') {
+    module.exports = factory();
+  } else if (typeof define === 'function' && define.amd) {
+    define(factory);
+  } else {
+    root.us = factory();
+  }
+}(this, function () {
+
+  var us = {};
+
+  us.states = {};
+  us.STATES = [];
+  us.TERRITORIES = [];
+  us.STATES_AND_TERRITORIES = [];
+
+  us.State = function(data) {
+    for (var key in data) {
+      if (data.hasOwnProperty(key)) {
+        this[key] = data[key];
+      }
+    }
+  };
+  us.State.prototype.toString = function() { return this.name; };
+  us.State.prototype.shapefile_urls = function(region) {
+    var base_url = "http://www2.census.gov/geo/tiger/TIGER2010";
+    var urls = {
+      'tract': base_url + '/TRACT/2010/tl_2010_' + this.fips.toString() + '_tract10.zip',
+      'cd': base_url + '/CD/111/tl_2010_' + this.fips.toString() + '_cd111.zip',
+      'county': base_url + '/COUNTY/2010/tl_2010_' + this.fips.toString() + '_county10.zip',
+      'state': base_url + '/STATE/2010/tl_2010_' + this.fips.toString() + '_state10.zip',
+      'zcta': base_url + '/ZCTA5/2010/tl_2010_' + this.fips.toString() + '_zcta510.zip',
+      'block': base_url + '/TABBLOCK/2010/tl_2010_' + this.fips.toString() + '_tabblock10.zip',
+      'blockgroup': base_url + '/BG/2010/tl_2010_' + this.fips.toString() + '_bg10.zip'
+     };
+     if (region && (region in urls)) {
+       return urls[region];
+     } else {
+       return urls;
+     }
+  };
+  /*   Semi-fuzzy state lookup. This method will make a best effort
+        attempt at finding the state based on the lookup value provided.
+
+          * two digits will search for FIPS code
+          * two letters will search for state abbreviation
+          * anything else will try to match the metaphone of state names
+
+        Metaphone is used to allow for incorrect, but phonetically accurate,
+        spelling of state names.
+
+        Exact matches can be done on any attribute on State objects by passing
+        the `field` argument. This skips the fuzzy-ish matching and does an
+        exact, case-sensitive comparison against the specified field.
+
+        This method caches non-None results, but can the cache can be bypassed
+        with the `use_cache=False` argument.
+    */
+  var FIPS_RE = /^\d{2}$/;
+  var ABBR_RE = /^[a-zA-Z]{2}$/;
+  var _lookup_cache = {};
+  us.lookup = function (val, field, dont_cache) {
+    if (field == null)  {
+      if (val.match(FIPS_RE)) {
+        field = 'fips';
+      } else if (val.match(ABBR_RE)) {
+        val = val.toUpperCase();
+        field = 'abbr';
+      } else {
+        val = metaphone(val);
+        field = 'name_metaphone';
+      }
+    }
+    var cache_key = field + ':' + val;
+    if (!dont_cache && (cache_key in _lookup_cache)) {
+      return _lookup_cache[cache_key];
+    }
+    for (var i=0; i < us.STATES_AND_TERRITORIES.length; i++) {
+      var state = us.STATES_AND_TERRITORIES[i];
+      if (val === state[field]) {
+        _lookup_cache[cache_key] = state;
+        return state;
+      }
+    }
+  };
+
+  us.mapping = function(from_field, to_field, states) {
+    if (typeof states == 'undefined' || states == null) {
+      states = us.STATES_AND_TERRITORIES;
+    }
+    var mapping = {};
+    for (var i=0; i < states.length; i++) {
+      var s = states[i];
+      mapping[s[from_field]] = s[to_field];
+    }
+    return mapping;
+  };
+
+  // https://github.com/kvz/phpjs/blob/master/functions/strings/metaphone.js
+  var metaphone = function (word, phones) {
+    // +   original by: Greg Frazier
+    // +   improved by: Brett Zamir (http://brett-zamir.me)
+    // +   improved by: Rafa? Kukawski (http://kukawski.pl)
+    // *     example 1: metaphone('Gnu');
+    // *     returns 1: 'N'
+
+    word = (word == null ? '' : word + '').toUpperCase();
+
+    function isVowel (a) {
+      return 'AEIOU'.indexOf(a) !== -1;
+    }
+
+    function removeDuplicates (word) {
+      var wordlength = word.length,
+        char1 = word.charAt(0),
+        char2,
+        rebuilt = char1;
+
+      for (var i = 1; i < wordlength; i++) {
+        char2 = word.charAt(i);
+
+        if (char2 !== char1 || char2 === 'C' || char2 === 'G') { // 'c' and 'g' are exceptions
+          rebuilt += char2;
+        }
+        char1 = char2;
+      }
+
+      return rebuilt;
+    }
+
+    word = removeDuplicates(word);
+
+    var wordlength = word.length,
+      x = 0,
+      metaword = '';
+
+    //Special wh- case
+    if (word.substr(0, 2) === 'WH') {
+      // Remove "h" and rebuild the string
+      word = 'W' + word.substr(2);
+    }
+
+    var cc = word.charAt(0); // current char. Short name cause it's used all over the function
+    var pc = ''; // previous char. There is none when x === 0
+    var nc = word.charAt(1); // next char
+    var nnc = ''; // 2 characters ahead. Needed later
+
+    if (1 <= wordlength) {
+      switch (cc) {
+      case 'A':
+        if (nc === 'E') {
+          metaword += 'E';
+        } else {
+          metaword += 'A';
+        }
+        x += 1;
+        break;
+      case 'E': case 'I': case 'O': case 'U':
+        metaword += cc;
+        x += 1;
+        break;
+      case 'G': case 'K': case 'P':
+        if (nc === 'N') {
+          x += 1;
+        }
+        break;
+      case 'W':
+        if (nc === 'R') {
+          x += 1;
+        }
+        break;
+      }
+    }
+
+    for (; x < wordlength; x++) {
+      cc = word.charAt(x);
+      pc = word.charAt(x - 1);
+      nc = word.charAt(x + 1);
+      nnc = word.charAt(x + 2);
+
+      if (!isVowel(cc)) {
+        switch (cc) {
+        case 'B':
+          if (pc !== 'M') {
+            metaword += 'B';
+          }
+          break;
+        case 'C':
+          if (x + 1 <= wordlength) {
+            if (word.substr(x - 1, 3) !== 'SCH') {
+              if (x === 0 && (x + 2 <= wordlength) && isVowel(nnc)) {
+                metaword += 'K';
+              } else {
+                metaword += 'X';
+              }
+            } else if (word.substr(x + 1, 2) === 'IA') {
+              metaword += 'X';
+            } else if ('IEY'.indexOf(nc) !== -1) {
+              if (x > 0) {
+                if (pc !== 'S') {
+                  metaword += 'S';
+                }
+              } else {
+                metaword += 'S';
+              }
+            } else {
+              metaword += 'K';
+            }
+          } else {
+            metaword += 'K';
+          }
+          break;
+        case 'D':
+          if (x + 2 <= wordlength && nc === 'G' && 'EIY'.indexOf(nnc) !== -1) {
+            metaword += 'J';
+            x += 2;
+          } else {
+            metaword += 'T';
+          }
+          break;
+        case 'F':
+          metaword += 'F';
+          break;
+        case 'G':
+          if (x < wordlength) {
+            if ((nc === 'N' && x + 1 === wordlength - 1) || (nc === 'N' && nnc === 'S' && x + 2 === wordlength - 1)) {
+              break;
+            }
+            if (word.substr(x + 1, 3) === 'NED' && x + 3 === wordlength - 1) {
+              break;
+            }
+            if (word.substr(x - 2, 3) === 'ING' && x === wordlength - 1) {
+              break;
+            }
+
+            if (x + 1 <= wordlength - 1 && word.substr(x - 2, 4) === 'OUGH') {
+              metaword += 'F';
+              break;
+            }
+            if (nc === 'H' && x + 2 <= wordlength) {
+              if (isVowel(nnc)) {
+                metaword += 'K';
+              }
+            } else if (x + 1 === wordlength) {
+              if (nc !== 'N') {
+                metaword += 'K';
+              }
+            } else if (x + 3 === wordlength) {
+              if (word.substr(x + 1, 3) !== 'NED') {
+                metaword += 'K';
+              }
+            } else if (x + 1 <= wordlength) {
+              if ('EIY'.indexOf(nc) !== -1) {
+                if (pc !== 'G') {
+                  metaword += 'J';
+                }
+              } else if (x === 0 || pc !== 'D' || 'EIY'.indexOf(nc) === -1) {
+                metaword += 'K';
+              }
+            } else {
+              metaword += 'K';
+            }
+          } else {
+            metaword += 'K';
+          }
+          break;
+        case 'M': case 'J': case 'N': case 'R': case 'L':
+          metaword += cc;
+          break;
+        case 'Q':
+          metaword += 'K';
+          break;
+        case 'V':
+          metaword += 'F';
+          break;
+        case 'Z':
+          metaword += 'S';
+          break;
+        case 'X':
+          metaword += (x === 0) ? 'S' : 'KS';
+          break;
+        case 'K':
+          if (x === 0 || pc !== 'C') {
+            metaword += 'K';
+          }
+          break;
+        case 'P':
+          if (x + 1 <= wordlength && nc === 'H') {
+            metaword += 'F';
+          } else {
+            metaword += 'P';
+          }
+          break;
+        case 'Y':
+          if (x + 1 > wordlength || isVowel(nc)) {
+            metaword += 'Y';
+          }
+          break;
+        case 'H':
+          if (x === 0 || 'CSPTG'.indexOf(pc) === -1) {
+            if (isVowel(nc) === true) {
+              metaword += 'H';
+            }
+          }
+          break;
+        case 'S':
+          if (x + 1 <= wordlength) {
+            if (nc === 'H') {
+              metaword += 'X';
+            } else if (x + 2 <= wordlength && nc === 'I' && 'AO'.indexOf(nnc) !== -1) {
+              metaword += 'X';
+            } else {
+              metaword += 'S';
+            }
+          } else {
+            metaword += 'S';
+          }
+          break;
+        case 'T':
+          if (x + 1 <= wordlength) {
+            if (nc === 'H') {
+              metaword += '0';
+            } else if (x + 2 <= wordlength && nc === 'I' && 'AO'.indexOf(nnc) !== -1) {
+              metaword += 'X';
+            } else {
+              metaword += 'T';
+            }
+          } else {
+            metaword += 'T';
+          }
+          break;
+        case 'W':
+          if (x + 1 <= wordlength && isVowel(nc)) {
+            metaword += 'W';
+          }
+          break;
+        }
+      }
+    }
+
+    phones = parseInt(phones, 10);
+    if (metaword.length > phones) {
+      return metaword.substr(0, phones);
+    }
+    return metaword;
+  };
+
+  var load_states = function() {
+    for (var i=0; i < load_states.DATA.length; i++) {
+      var s = load_states.DATA[i];
+      var state = new us.State(s);
+      if (state.is_territory) {
+        us.TERRITORIES.push(state);
+      } else {
+        us.STATES.push(state);
+      }
+      us.STATES_AND_TERRITORIES.push(state);
+      us.states[state.abbr] = state;
+    }
+  };
+
+  load_states.DATA = [
+    {"name": "Alabama", "name_metaphone": "ALBM", "statehood_year": 1819, "ap_abbr": "Ala.", "is_territory": false, "fips": "01", "abbr": "AL", "capital": "Montgomery", "capital_tz": "America/Chicago", "time_zones": ["America/Chicago"]},
+    {"name": "Alaska", "name_metaphone": "ALSK", "statehood_year": 1959, "ap_abbr": "Alaska", "is_territory": false, "fips": "02", "abbr": "AK", "capital": "Juneau", "capital_tz": "America/Anchorage", "time_zones": ["America/Anchorage", "America/Adak"]},
+    {"name": "American Samoa", "name_metaphone": "AMRKN SM", "statehood_year": null, "ap_abbr": null, "is_territory": true, "fips": "60", "abbr": "AS", "capital": "Pago Pago", "capital_tz": "Pacific/Samoa", "time_zones": ["Pacific/Samoa"]},
+    {"name": "Arizona", "name_metaphone": "ARSN", "statehood_year": 1912, "ap_abbr": "Ariz.", "is_territory": false, "fips": "04", "abbr": "AZ", "capital": "Phoenix", "capital_tz": "America/Denver", "time_zones": ["America/Denver"]},
+    {"name": "Arkansas", "name_metaphone": "ARKNSS", "statehood_year": 1836, "ap_abbr": "Ark.", "is_territory": false, "fips": "05", "abbr": "AR", "capital": "Little Rock", "capital_tz": "America/Chicago", "time_zones": ["America/Chicago"]},
+    {"name": "California", "name_metaphone": "KLFRN", "statehood_year": 1850, "ap_abbr": "Calif.", "is_territory": false, "fips": "06", "abbr": "CA", "capital": "Sacramento", "capital_tz": "America/Los_Angeles", "time_zones": ["America/Los_Angeles"]},
+    {"name": "Colorado", "name_metaphone": "KLRT", "statehood_year": 1876, "ap_abbr": "Colo.", "is_territory": false, "fips": "08", "abbr": "CO", "capital": "Denver", "capital_tz": "America/Denver", "time_zones": ["America/Denver"]},
+    {"name": "Connecticut", "name_metaphone": "KNKTKT", "statehood_year": 1788, "ap_abbr": "Conn.", "is_territory": false, "fips": "09", "abbr": "CT", "capital": "Hartford", "capital_tz": "America/New_York", "time_zones": ["America/New_York"]},
+    {"name": "Delaware", "name_metaphone": "TLWR", "statehood_year": 1787, "ap_abbr": "Del.", "is_territory": false, "fips": "10", "abbr": "DE", "capital": "Dover", "capital_tz": "America/New_York", "time_zones": ["America/New_York"]},
+    {"name": "District of Columbia", "name_metaphone": "TSTRKT OF KLMB", "statehood_year": null, "ap_abbr": "D.C.", "is_territory": false, "fips": "11", "abbr": "DC", "capital": null, "capital_tz": "America/New_York", "time_zones": ["America/New_York"]},
+    {"name": "Florida", "name_metaphone": "FLRT", "statehood_year": 1845, "ap_abbr": "Fla.", "is_territory": false, "fips": "12", "abbr": "FL", "capital": "Tallahassee", "capital_tz": "America/New_York", "time_zones": ["America/New_York", "America/Chicago"]},
+    {"name": "Georgia", "name_metaphone": "JRJ", "statehood_year": 1788, "ap_abbr": "Ga.", "is_territory": false, "fips": "13", "abbr": "GA", "capital": "Atlanta", "capital_tz": "America/New_York", "time_zones": ["America/New_York"]},
+    {"name": "Guam", "name_metaphone": "KM", "statehood_year": null, "ap_abbr": null, "is_territory": true, "fips": "66", "abbr": "GU", "capital": "Hag\\u00e5t\\u00f1a", "capital_tz": "Pacific/Guam", "time_zones": ["Pacific/Guam"]},
+    {"name": "Hawaii", "name_metaphone": "HW", "statehood_year": 1959, "ap_abbr": "Hawaii", "is_territory": false, "fips": "15", "abbr": "HI", "capital": "Honolulu", "capital_tz": "Pacific/Honolulu", "time_zones": ["Pacific/Honolulu"]},
+    {"name": "Idaho", "name_metaphone": "ITH", "statehood_year": 1890, "ap_abbr": "Idaho", "is_territory": false, "fips": "16", "abbr": "ID", "capital": "Boise", "capital_tz": "America/Denver", "time_zones": ["America/Denver", "America/Los_Angeles"]},
+    {"name": "Illinois", "name_metaphone": "ILNS", "statehood_year": 1818, "ap_abbr": "Ill.", "is_territory": false, "fips": "17", "abbr": "IL", "capital": "Springfield", "capital_tz": "America/Chicago", "time_zones": ["America/Chicago"]},
+    {"name": "Indiana", "name_metaphone": "INTN", "statehood_year": 1816, "ap_abbr": "Ind.", "is_territory": false, "fips": "18", "abbr": "IN", "capital": "Indianapolis", "capital_tz": "America/Indiana/Indianapolis", "time_zones": ["America/Indiana/Indianapolis", "America/Indianapolis", "America/Indiana/Winamac", "America/Indiana/Vincennes", "America/Indiana/Vevay", "America/Indiana/Tell_City", "America/Indiana/Petersburg", "America/Indiana/Marengo", "America/Indiana/Knox", "America/Knox_IN"]},
+    {"name": "Iowa", "name_metaphone": "IW", "statehood_year": 1846, "ap_abbr": "Iowa", "is_territory": false, "fips": "19", "abbr": "IA", "capital": "Des Moines", "capital_tz": "America/Chicago", "time_zones": ["America/Chicago"]},
+    {"name": "Kansas", "name_metaphone": "KNSS", "statehood_year": 1861, "ap_abbr": "Kan.", "is_territory": false, "fips": "20", "abbr": "KS", "capital": "Topeka", "capital_tz": "America/Chicago", "time_zones": ["America/Chicago", "America/Denver"]},
+    {"name": "Kentucky", "name_metaphone": "KNTK", "statehood_year": 1792, "ap_abbr": "Ky.", "is_territory": false, "fips": "21", "abbr": "KY", "capital": "Frankfort", "capital_tz": "America/New_York", "time_zones": ["America/New_York", "America/Kentucky/Louisville", "America/Kentucky/Monticello", "America/Louisville"]},
+    {"name": "Louisiana", "name_metaphone": "LXN", "statehood_year": 1812, "ap_abbr": "La.", "is_territory": false, "fips": "22", "abbr": "LA", "capital": "Baton Rouge", "capital_tz": "America/Chicago", "time_zones": ["America/Chicago"]},
+    {"name": "Maine", "name_metaphone": "MN", "statehood_year": 1820, "ap_abbr": "Maine", "is_territory": false, "fips": "23", "abbr": "ME", "capital": "Augusta", "capital_tz": "America/New_York", "time_zones": ["America/New_York"]},
+    {"name": "Maryland", "name_metaphone": "MRLNT", "statehood_year": 1788, "ap_abbr": "Md.", "is_territory": false, "fips": "24", "abbr": "MD", "capital": "Annapolis", "capital_tz": "America/New_York", "time_zones": ["America/New_York"]},
+    {"name": "Massachusetts", "name_metaphone": "MSXSTS", "statehood_year": 1788, "ap_abbr": "Mass.", "is_territory": false, "fips": "25", "abbr": "MA", "capital": "Boston", "capital_tz": "America/New_York", "time_zones": ["America/New_York"]},
+    {"name": "Michigan", "name_metaphone": "MXKN", "statehood_year": 1837, "ap_abbr": "Mich.", "is_territory": false, "fips": "26", "abbr": "MI", "capital": "Lansing", "capital_tz": "America/New_York", "time_zones": ["America/New_York", "America/Chicago"]},
+    {"name": "Minnesota", "name_metaphone": "MNST", "statehood_year": 1858, "ap_abbr": "Minn.", "is_territory": false, "fips": "27", "abbr": "MN", "capital": "Saint Paul", "capital_tz": "America/Chicago", "time_zones": ["America/Chicago"]},
+    {"name": "Mississippi", "name_metaphone": "MSSP", "statehood_year": 1817, "ap_abbr": "Miss.", "is_territory": false, "fips": "28", "abbr": "MS", "capital": "Jackson", "capital_tz": "America/Chicago", "time_zones": ["America/Chicago"]},
+    {"name": "Missouri", "name_metaphone": "MSR", "statehood_year": 1821, "ap_abbr": "Mo.", "is_territory": false, "fips": "29", "abbr": "MO", "capital": "Jefferson City", "capital_tz": "America/Chicago", "time_zones": ["America/Chicago"]},
+    {"name": "Montana", "name_metaphone": "MNTN", "statehood_year": 1889, "ap_abbr": "Mont.", "is_territory": false, "fips": "30", "abbr": "MT", "capital": "Helena", "capital_tz": "America/Denver", "time_zones": ["America/Denver"]},
+    {"name": "Nebraska", "name_metaphone": "NBRSK", "statehood_year": 1867, "ap_abbr": "Neb.", "is_territory": false, "fips": "31", "abbr": "NE", "capital": "Lincoln", "capital_tz": "America/Chicago", "time_zones": ["America/Chicago", "America/Denver"]},
+    {"name": "Nevada", "name_metaphone": "NFT", "statehood_year": 1864, "ap_abbr": "Nev.", "is_territory": false, "fips": "32", "abbr": "NV", "capital": "Carson City", "capital_tz": "America/Los_Angeles", "time_zones": ["America/Los_Angeles", "America/Denver"]},
+    {"name": "New Hampshire", "name_metaphone": "N HMPXR", "statehood_year": 1788, "ap_abbr": "N.H.", "is_territory": false, "fips": "33", "abbr": "NH", "capital": "Concord", "capital_tz": "America/New_York", "time_zones": ["America/New_York"]},
+    {"name": "New Jersey", "name_metaphone": "N JRS", "statehood_year": 1787, "ap_abbr": "N.J.", "is_territory": false, "fips": "34", "abbr": "NJ", "capital": "Trenton", "capital_tz": "America/New_York", "time_zones": ["America/New_York"]},
+    {"name": "New Mexico", "name_metaphone": "N MKSK", "statehood_year": 1912, "ap_abbr": "N.M.", "is_territory": false, "fips": "35", "abbr": "NM", "capital": "Santa Fe", "capital_tz": "America/Chicago", "time_zones": ["America/Chicago"]},
+    {"name": "New York", "name_metaphone": "NYRK", "statehood_year": 1788, "ap_abbr": "N.Y.", "is_territory": false, "fips": "36", "abbr": "NY", "capital": "Albany", "capital_tz": "America/New_York", "time_zones": ["America/New_York"]},
+    {"name": "North Carolina", "name_metaphone": "NR0 KRLN", "statehood_year": 1789, "ap_abbr": "N.C.", "is_territory": false, "fips": "37", "abbr": "NC", "capital": "Raleigh", "capital_tz": "America/New_York", "time_zones": ["America/New_York"]},
+    {"name": "North Dakota", "name_metaphone": "NR0 TKT", "statehood_year": 1889, "ap_abbr": "N.D.", "is_territory": false, "fips": "38", "abbr": "ND", "capital": "Bismarck", "capital_tz": "America/North_Dakota/Center", "time_zones": ["America/North_Dakota/Center", "America/North_Dakota/Beulah", "America/North_Dakota/Center", "America/North_Dakota/New_Salem"]},
+    {"name": "Northern Mariana Islands", "name_metaphone": "NR0RN MRN ISLNTS", "statehood_year": null, "ap_abbr": null, "is_territory": true, "fips": "69", "abbr": "MP", "capital": "Saipan", "capital_tz": "Pacific/Guam", "time_zones": ["Pacific/Guam"]},
+    {"name": "Ohio", "name_metaphone": "OH", "statehood_year": 1803, "ap_abbr": "Ohio", "is_territory": false, "fips": "39", "abbr": "OH", "capital": "Columbus", "capital_tz": "America/New_York", "time_zones": ["America/New_York"]},
+    {"name": "Oklahoma", "name_metaphone": "OKLHM", "statehood_year": 1907, "ap_abbr": "Okla.", "is_territory": false, "fips": "40", "abbr": "OK", "capital": "Oklahoma City", "capital_tz": "America/Chicago", "time_zones": ["America/Chicago"]},
+    {"name": "Oregon", "name_metaphone": "ORKN", "statehood_year": 1859, "ap_abbr": "Ore.", "is_territory": false, "fips": "41", "abbr": "OR", "capital": "Salem", "capital_tz": "America/Los_Angeles", "time_zones": ["America/Los_Angeles", "America/Boise"]},
+    {"name": "Pennsylvania", "name_metaphone": "PNSLFN", "statehood_year": 1787, "ap_abbr": "Pa.", "is_territory": false, "fips": "42", "abbr": "PA", "capital": "Harrisburg", "capital_tz": "America/New_York", "time_zones": ["America/New_York"]},
+    {"name": "Puerto Rico", "name_metaphone": "PRT RK", "statehood_year": null, "ap_abbr": null, "is_territory": true, "fips": "72", "abbr": "PR", "capital": "San Juan", "capital_tz": "America/Puerto_Rico", "time_zones": ["America/Puerto_Rico"]},
+    {"name": "Rhode Island", "name_metaphone": "RHT ISLNT", "statehood_year": 1790, "ap_abbr": "R.I.", "is_territory": false, "fips": "44", "abbr": "RI", "capital": "Providence", "capital_tz": "America/New_York", "time_zones": ["America/New_York"]},
+    {"name": "South Carolina", "name_metaphone": "S0 KRLN", "statehood_year": 1788, "ap_abbr": "S.C.", "is_territory": false, "fips": "45", "abbr": "SC", "capital": "Columbia", "capital_tz": "America/New_York", "time_zones": ["America/New_York"]},
+    {"name": "South Dakota", "name_metaphone": "S0 TKT", "statehood_year": 1889, "ap_abbr": "S.D.", "is_territory": false, "fips": "46", "abbr": "SD", "capital": "Pierre", "capital_tz": "America/Chicago", "time_zones": ["America/Chicago", "America/Denver"]},
+    {"name": "Tennessee", "name_metaphone": "TNS", "statehood_year": 1796, "ap_abbr": "Tenn.", "is_territory": false, "fips": "47", "abbr": "TN", "capital": "Nashville", "capital_tz": "America/Chicago", "time_zones": ["America/Chicago", "America/New_York"]},
+    {"name": "Texas", "name_metaphone": "TKSS", "statehood_year": 1845, "ap_abbr": "Texas", "is_territory": false, "fips": "48", "abbr": "TX", "capital": "Austin", "capital_tz": "America/Chicago", "time_zones": ["America/Chicago", "America/Denver"]},
+    {"name": "Utah", "name_metaphone": "UT", "statehood_year": 1896, "ap_abbr": "Utah", "is_territory": false, "fips": "49", "abbr": "UT", "capital": "Salt Lake City", "capital_tz": "America/Denver", "time_zones": ["America/Denver"]},
+    {"name": "Vermont", "name_metaphone": "FRMNT", "statehood_year": 1791, "ap_abbr": "Vt.", "is_territory": false, "fips": "50", "abbr": "VT", "capital": "Montpelier", "capital_tz": "America/New_York", "time_zones": ["America/New_York"]},
+    {"name": "Virgin Islands", "name_metaphone": "FRJN ISLNTS", "statehood_year": null, "ap_abbr": null, "is_territory": true, "fips": "78", "abbr": "VI", "capital": "Charlotte Amalie", "capital_tz": "America/Puerto_Rico", "time_zones": ["America/Puerto_Rico"]},
+    {"name": "Virginia", "name_metaphone": "FRJN", "statehood_year": 1788, "ap_abbr": "Va.", "is_territory": false, "fips": "51", "abbr": "VA", "capital": "Richmond", "capital_tz": "America/New_York", "time_zones": ["America/New_York"]},
+    {"name": "Washington", "name_metaphone": "WXNKTN", "statehood_year": 1889, "ap_abbr": "Wash.", "is_territory": false, "fips": "53", "abbr": "WA", "capital": "Olympia", "capital_tz": "America/Los_Angeles", "time_zones": ["America/Los_Angeles"]},
+    {"name": "West Virginia", "name_metaphone": "WST FRJN", "statehood_year": 1863, "ap_abbr": "W.Va.", "is_territory": false, "fips": "54", "abbr": "WV", "capital": "Charleston", "capital_tz": "America/New_York", "time_zones": ["America/New_York"]},
+    {"name": "Wisconsin", "name_metaphone": "WSKNSN", "statehood_year": 1848, "ap_abbr": "Wis.", "is_territory": false, "fips": "55", "abbr": "WI", "capital": "Madison", "capital_tz": "America/Chicago", "time_zones": ["America/Chicago"]},
+    {"name": "Wyoming", "name_metaphone": "YMNK", "statehood_year": 1890, "ap_abbr": "Wyo.", "is_territory": false, "fips": "56", "abbr": "WY", "capital": "Cheyenne", "capital_tz": "America/Denver", "time_zones": ["America/Denver"]}
+  ];
+  load_states();
+
+  return us;
+}));
+
+},{}],172:[function(require,module,exports){
 /* app.js
  * Used to setup app. 
  * Dependencies: 
-    - modules: angular, react, ngReact
-    - components: StepOneDirective
-    - services: 
+    - modules: angular, angular-route, react, ngReact
+    - components: StepOneDirective, StepTwoDirective, StepThreeDirective
+    - services: FormDispatcher, FormStore, FormActions
     - other: config
  * Author: Joshua Carter
  * Created: December 23, 2015
@@ -49621,6 +54936,10 @@ var _angularRoute = require('angular-route');
 
 var _angularRoute2 = _interopRequireDefault(_angularRoute);
 
+var _angularAnimate = require('angular-animate');
+
+var _angularAnimate2 = _interopRequireDefault(_angularAnimate);
+
 var _react = require('react');
 
 var _react2 = _interopRequireDefault(_react);
@@ -49631,21 +54950,41 @@ var _ngreact2 = _interopRequireDefault(_ngreact);
 
 //include components
 
-var _stepOneStepOneJs = require('./step-one/StepOne.js');
+var _menuMenuJs = require('./menu/Menu.js');
+
+var _formStepOneStepOneJs = require('./form/step-one/StepOne.js');
+
+var _formStepTwoStepTwoJs = require('./form/step-two/StepTwo.js');
+
+var _formStepThreeStepThreeJs = require('./form/step-three/StepThree.js');
 
 //include services
+
+var _formFluxFormDispatcherJs = require('./form/flux/FormDispatcher.js');
+
+var _formFluxFormStoreJs = require('./form/flux/FormStore.js');
+
+var _formFluxFormActionsJs = require('./form/flux/FormActions.js');
+
+var _formServicesGetLocationJs = require('./form/services/GetLocation.js');
+
 //include other objects
 
 var _configJs = require('./config.js');
 
 //create app module
-var app = _angular2['default'].module('DEVTEST.xyz', ['react', 'ngRoute']).config(['$routeProvider', _configJs.config])
+var app = _angular2['default'].module('DEVTEST.xyz', ['react', 'ngRoute', 'ngAnimate']).config(['$routeProvider', _configJs.config])
 //create constants
+.constant('FORM_ACTIONS', {
+    UPDATE: 1,
+    SUBMIT: 2
+})
 //create services
+.factory('FormDispatcher', _formFluxFormDispatcherJs.FormDispatcher).service('FormStore', _formFluxFormStoreJs.FormStore).service('FormActions', _formFluxFormActionsJs.FormActions).service('GetLocation', _formServicesGetLocationJs.GetLocation)
 //wrap React components in Angular directives
-.directive("stepOne", _stepOneStepOneJs.StepOneDirective);
+.directive("menu", _menuMenuJs.MenuDirective).directive("stepOne", _formStepOneStepOneJs.StepOneDirective).directive("stepTwo", _formStepTwoStepTwoJs.StepTwoDirective).directive("stepThree", _formStepThreeStepThreeJs.StepThreeDirective);
 
-},{"./config.js":321,"./step-one/StepOne.js":324,"angular":4,"angular-route":2,"ngreact":6,"react":319}],321:[function(require,module,exports){
+},{"./config.js":173,"./form/flux/FormActions.js":174,"./form/flux/FormDispatcher.js":175,"./form/flux/FormStore.js":176,"./form/services/GetLocation.js":177,"./form/step-one/StepOne.js":185,"./form/step-three/StepThree.js":186,"./form/step-two/StepTwo.js":187,"./menu/Menu.js":188,"angular":6,"angular-animate":2,"angular-route":4,"ngreact":12,"react":170}],173:[function(require,module,exports){
 /* config.js
  * Creates config block for app and set's up routing; also creates other app-wide objects
  * Author: Joshua Carter
@@ -49660,6 +54999,10 @@ var config = function config($routeProvider) {
     //create routes
     $routeProvider.when('/', {
         template: '<step-one t="scope"></step-one>'
+    }).when('/step-2', {
+        template: '<step-two t="scope"></step-two>'
+    }).when('/step-3', {
+        template: '<step-three t="scope"></step-three>'
     }).otherwise({
         redirectTo: '/'
     });
@@ -49667,8 +55010,528 @@ var config = function config($routeProvider) {
 //export objects
 exports.config = config;
 
-},{}],322:[function(require,module,exports){
+},{}],174:[function(require,module,exports){
+/* FormActions.js
+ * Flux actions for our form
+ * Dependencies: FormDispatcher service, FORM_ACTIONS constant
+ * Author: Joshua Carter
+ * Created: December 31, 2015
+ */
+"use strict";
+//create our actions class
+Object.defineProperty(exports, '__esModule', {
+    value: true
+});
+
+var _createClass = (function () { function defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ('value' in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } } return function (Constructor, protoProps, staticProps) { if (protoProps) defineProperties(Constructor.prototype, protoProps); if (staticProps) defineProperties(Constructor, staticProps); return Constructor; }; })();
+
+function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError('Cannot call a class as a function'); } }
+
+var FormActions = (function () {
+    function FormActions(FormDispatcher, FORM_ACTIONS) {
+        _classCallCheck(this, FormActions);
+
+        //create shortcut for our constants
+        this._FA = FORM_ACTIONS;
+        this._FormDispatcher = FormDispatcher;
+    }
+
+    //update fields in the form
+    //can also be used to add new fields
+    // - fields (obj) - A collection of form fields to update or add
+
+    _createClass(FormActions, [{
+        key: 'update',
+        value: function update(fields) {
+            this._FormDispatcher.dispatch({
+                actionType: this._FA.UPDATE,
+                fields: fields
+            });
+        }
+
+        //submit our form data
+    }, {
+        key: 'submit',
+        value: function submit() {
+            this._FormDispatcher.dispatch({
+                actionType: this._FA.SUBMIT
+            });
+        }
+    }]);
+
+    return FormActions;
+})();
+//inject resources info actions class
+FormActions.$inject = ['FormDispatcher', 'FORM_ACTIONS'];
+//export actions class
+exports.FormActions = FormActions;
+
+},{}],175:[function(require,module,exports){
+/* FormDispatcher.js
+ * Flux dispatcher for our form
+ * Dependencies: flux module, FormStore service, FORM_ACTIONS constant
+ * Author: Joshua Carter
+ * Created: December 31, 2015
+ */
+"use strict";
+//import modules
+Object.defineProperty(exports, '__esModule', {
+    value: true
+});
+
+function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { 'default': obj }; }
+
+var _flux = require('flux');
+
+var _flux2 = _interopRequireDefault(_flux);
+
+//function to create our dispatcher
+var FormDispatcher = function FormDispatcher(FormStore, FORM_ACTIONS) {
+    //create new dispatcher
+    var Dispatcher = new _flux2['default'].Dispatcher(),
+
+    //collection of actions for our form
+    dispatchActions = {},
+
+    //shortcut for our constants
+    FA = FORM_ACTIONS;
+
+    //create disptach actions
+    dispatchActions[FA.UPDATE] = function (data) {
+        //if we received fields, update the store
+        if (data.fields) {
+            FormStore.updateFields(data.fields);
+        }
+    };
+    dispatchActions[FA.SUBMIT] = function (data) {
+        //submit form data
+        FormStore.submitData();
+    };
+
+    // Register dispatch callback to handle all updates
+    Dispatcher.register(function (action) {
+        //if we have a valid action
+        if (action.actionType in dispatchActions) {
+            //then execute the action
+            dispatchActions[action.actionType](action);
+        } //else, do nothing
+    });
+
+    return Dispatcher;
+};
+//inject resources into dispatcher function
+FormDispatcher.$inject = ['FormStore', 'FORM_ACTIONS'];
+//export dispatcher function
+exports.FormDispatcher = FormDispatcher;
+
+},{"flux":9}],176:[function(require,module,exports){
+/* FormStore.js
+ * Flux store for our form
+ * Dependencies: Events, angular modules, GetLocation service
+ * Author: Joshua Carter
+ * Created: December 31, 2015
+ */
+"use strict";
+//include modules
+Object.defineProperty(exports, '__esModule', {
+    value: true
+});
+
+var _createClass = (function () { function defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ('value' in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } } return function (Constructor, protoProps, staticProps) { if (protoProps) defineProperties(Constructor.prototype, protoProps); if (staticProps) defineProperties(Constructor, staticProps); return Constructor; }; })();
+
+var _get = function get(_x, _x2, _x3) { var _again = true; _function: while (_again) { var object = _x, property = _x2, receiver = _x3; _again = false; if (object === null) object = Function.prototype; var desc = Object.getOwnPropertyDescriptor(object, property); if (desc === undefined) { var parent = Object.getPrototypeOf(object); if (parent === null) { return undefined; } else { _x = parent; _x2 = property; _x3 = receiver; _again = true; desc = parent = undefined; continue _function; } } else if ('value' in desc) { return desc.value; } else { var getter = desc.get; if (getter === undefined) { return undefined; } return getter.call(receiver); } } };
+
+function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { 'default': obj }; }
+
+function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError('Cannot call a class as a function'); } }
+
+function _inherits(subClass, superClass) { if (typeof superClass !== 'function' && superClass !== null) { throw new TypeError('Super expression must either be null or a function, not ' + typeof superClass); } subClass.prototype = Object.create(superClass && superClass.prototype, { constructor: { value: subClass, enumerable: false, writable: true, configurable: true } }); if (superClass) Object.setPrototypeOf ? Object.setPrototypeOf(subClass, superClass) : subClass.__proto__ = superClass; }
+
+var _events = require('events');
+
+var _events2 = _interopRequireDefault(_events);
+
+var _angular = require('angular');
+
+var _angular2 = _interopRequireDefault(_angular);
+
+//create class for our store
+var FormStore = (function (_Events$EventEmitter) {
+    _inherits(FormStore, _Events$EventEmitter);
+
+    function FormStore(GetLocation) {
+        _classCallCheck(this, FormStore);
+
+        //call EventEmitter constructor
+        _get(Object.getPrototypeOf(FormStore.prototype), 'constructor', this).call(this);
+        //save location service
+        this._GetLocation = GetLocation;
+        //save event to server as our change event
+        this._CHANGE_EVENT = 'change';
+        //create a collection of fields from our form
+        this._formFields = {};
+    }
+
+    //determine if we have a zip code
+
+    _createClass(FormStore, [{
+        key: 'haveZip',
+        value: function haveZip() {
+            return 'zip' in this._formFields;
+        }
+
+        //update our city and state using the location service
+    }, {
+        key: 'updateCityState',
+        value: function updateCityState() {
+            //if we have a valid zip code
+            if (this.haveZip() && parseInt(this._formFields.zip) > 0) {
+                //then use it to get our city and state
+                this._GetLocation.location(this._formFields.zip).then((function (location) {
+                    //SUCCESS
+                    var fields = {};
+                    //if we have a location
+                    if (location) {
+                        //get our city and state
+                        if (location.city) {
+                            fields.city = location.city;
+                        }
+                        if (location.state) {
+                            fields.state = location.state;
+                        }
+                        //add our city and state to our collection,
+                        //but do it outside of Angular to stay consistent
+                        setTimeout((function () {
+                            this.updateFields(fields);
+                        }).bind(this), 0);
+                    }
+                }).bind(this), function (error) {
+                    //ERROR
+                });
+            } //else, do nothing
+        }
+
+        //update fields in our formFields collection
+        //can also be used to add new fields
+        // - fields (obj) - A collection of form fields to be merged into our collection
+    }, {
+        key: 'updateFields',
+        value: function updateFields(fields) {
+            //if we don't have fields
+            if (typeof fields != "object" || fields === null || Object.keys(fields).length < 1) {
+                //do nothing
+                return;
+            }
+            //we have fields so add them (shallow merge)
+            _angular2['default'].extend(this._formFields, fields);
+            //if our zip was just updated
+            if ('zip' in fields) {
+                //then update our city and state
+                this.updateCityState();
+            }
+            //our fields have changed
+            this._emitChange();
+        }
+
+        //get all or some fields from our collection
+        // - fields (string, obj -- array) (optional) Either single field, or array of fields to get.
+    }, {
+        key: 'getFields',
+        value: function getFields(fields) {
+            var collection = {},
+                k;
+            //if we are to get single field
+            if (typeof field == 'string') {
+                //get the field, if it exists
+                return field in this._formFields ? this._formFields[field] : '';
+            }
+            //else, if we are to get all fields
+            if (typeof fields !== 'object' && fields !== null && type) {
+                //then return all fields
+                return this._formFields;
+            }
+            //else, loop fields, get each field
+            for (var i = 0; i < fields.length; i++) {
+                k = fields[i];
+                collection[k] = k in this._formFields ? this._formFields[k] : '';
+            }
+            //return collection
+            return collection;
+        }
+
+        //submits our form data
+    }, {
+        key: 'submitData',
+        value: function submitData() {
+            //convert of fields to json
+            var data = JSON.stringify(this._formFields),
+
+            //open a new window
+            w = window.open('about:blank', 'Form Data', 'width=400,height=400,scrollbars,resizeable');
+            //add data to window
+            w.document.write(data);
+        }
+
+        //triggers change event on our app
+    }, {
+        key: '_emitChange',
+        value: function _emitChange() {
+            this.emit(this._CHANGE_EVENT);
+        }
+
+        //used to add listeners for our change event
+    }, {
+        key: 'addChangeListener',
+        value: function addChangeListener(callback) {
+            this.on(this._CHANGE_EVENT, callback);
+        }
+
+        //used to cleanup listeners on our change event
+    }, {
+        key: 'removeChangeListener',
+        value: function removeChangeListener(callback) {
+            this.removeListener(this._CHANGE_EVENT, callback);
+        }
+    }]);
+
+    return FormStore;
+})(_events2['default'].EventEmitter);
+
+exports.FormStore = FormStore;
+
+},{"angular":6,"events":8}],177:[function(require,module,exports){
+/* GetLocation.js
+ * Fetches info for location
+ * Dependencies: $http
+ * Author: Joshua Carter
+ * Created: December 31, 2015
+ */
+"use strict";
+//create GetLocation service
+Object.defineProperty(exports, '__esModule', {
+    value: true
+});
+
+var _createClass = (function () { function defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ('value' in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } } return function (Constructor, protoProps, staticProps) { if (protoProps) defineProperties(Constructor.prototype, protoProps); if (staticProps) defineProperties(Constructor, staticProps); return Constructor; }; })();
+
+function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError('Cannot call a class as a function'); } }
+
+var GetLocation = (function () {
+    function GetLocation($http) {
+        _classCallCheck(this, GetLocation);
+
+        //private static properties that define service
+        this._$http = $http;
+        this._apiRoot = 'http://ziptasticapi.com/';
+        //private properties that define instance
+        //store a location request in progress
+        this._locationRequest = false;
+    }
+
+    //get location from server
+    // - (int, string) The zip code of our location
+
+    _createClass(GetLocation, [{
+        key: 'location',
+        value: function location(zip) {
+            //if there is a request for location in progress
+            if (this._locationRequest) {
+                //then return the unresolved promise
+                return this._locationRequest;
+            }
+            //else, create GET request, and return promise
+            return this._locationRequest = this._$http({
+                method: 'GET',
+                url: this._apiRoot + zip
+            }).then(function (response) {
+                //SUCCESS
+                //if there was an error
+                if (response.data.error) {
+                    //then return nothing
+                    return null;
+                }
+                //else, just return the data
+                return response.data;
+            }, function (response) {
+                //ERROR
+                return null;
+            })['finally']((function () {
+                //remove the saved request
+                this._locationRequest = false;
+            }).bind(this));
+        }
+    }]);
+
+    return GetLocation;
+})();
+//inject resources and contants into service
+GetLocation.$inject = ['$http'];
+//export GetLocation service
+exports.GetLocation = GetLocation;
+
+},{}],178:[function(require,module,exports){
+/* Back.js
+ * Displays the back button in form
+ * Dependencies: React, InputGroup component
+ * Author: Joshua Carter
+ * Created: December 23, 2015
+ */
+"use strict";
+//include modules
+Object.defineProperty(exports, '__esModule', {
+    value: true
+});
+
+var _createClass = (function () { function defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ('value' in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } } return function (Constructor, protoProps, staticProps) { if (protoProps) defineProperties(Constructor.prototype, protoProps); if (staticProps) defineProperties(Constructor, staticProps); return Constructor; }; })();
+
+var _get = function get(_x, _x2, _x3) { var _again = true; _function: while (_again) { var object = _x, property = _x2, receiver = _x3; _again = false; if (object === null) object = Function.prototype; var desc = Object.getOwnPropertyDescriptor(object, property); if (desc === undefined) { var parent = Object.getPrototypeOf(object); if (parent === null) { return undefined; } else { _x = parent; _x2 = property; _x3 = receiver; _again = true; desc = parent = undefined; continue _function; } } else if ('value' in desc) { return desc.value; } else { var getter = desc.get; if (getter === undefined) { return undefined; } return getter.call(receiver); } } };
+
+function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { 'default': obj }; }
+
+function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError('Cannot call a class as a function'); } }
+
+function _inherits(subClass, superClass) { if (typeof superClass !== 'function' && superClass !== null) { throw new TypeError('Super expression must either be null or a function, not ' + typeof superClass); } subClass.prototype = Object.create(superClass && superClass.prototype, { constructor: { value: subClass, enumerable: false, writable: true, configurable: true } }); if (superClass) Object.setPrototypeOf ? Object.setPrototypeOf(subClass, superClass) : subClass.__proto__ = superClass; }
+
+var _react = require('react');
+
+var _react2 = _interopRequireDefault(_react);
+
+//include components
+
+var _InputGroupJs = require('./InputGroup.js');
+
+//create Back react component
+var Back = (function (_React$Component) {
+    _inherits(Back, _React$Component);
+
+    function Back() {
+        _classCallCheck(this, Back);
+
+        _get(Object.getPrototypeOf(Back.prototype), 'constructor', this).apply(this, arguments);
+    }
+
+    _createClass(Back, [{
+        key: 'render',
+        value: function render() {
+            return _react2['default'].createElement(
+                _InputGroupJs.InputGroup,
+                { float: 'left' },
+                _react2['default'].createElement(
+                    'button',
+                    { type: 'button', name: 'back', onClick: this.props.onClick },
+                    'Back'
+                )
+            );
+        }
+    }]);
+
+    return Back;
+})(_react2['default'].Component);
+//define prop types
+Back.propTypes = {
+    onClick: _react2['default'].PropTypes.func
+};
+//export component
+exports.Back = Back;
+
+},{"./InputGroup.js":180,"react":170}],179:[function(require,module,exports){
 /* Input.js
+ * Displays a label and input in form
+ * Dependencies: React, InputGroup component
+ * Author: Joshua Carter
+ * Created: December 23, 2015
+ */
+"use strict";
+//include modules
+Object.defineProperty(exports, '__esModule', {
+    value: true
+});
+
+var _createClass = (function () { function defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ('value' in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } } return function (Constructor, protoProps, staticProps) { if (protoProps) defineProperties(Constructor.prototype, protoProps); if (staticProps) defineProperties(Constructor, staticProps); return Constructor; }; })();
+
+var _get = function get(_x, _x2, _x3) { var _again = true; _function: while (_again) { var object = _x, property = _x2, receiver = _x3; _again = false; if (object === null) object = Function.prototype; var desc = Object.getOwnPropertyDescriptor(object, property); if (desc === undefined) { var parent = Object.getPrototypeOf(object); if (parent === null) { return undefined; } else { _x = parent; _x2 = property; _x3 = receiver; _again = true; desc = parent = undefined; continue _function; } } else if ('value' in desc) { return desc.value; } else { var getter = desc.get; if (getter === undefined) { return undefined; } return getter.call(receiver); } } };
+
+function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { 'default': obj }; }
+
+function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError('Cannot call a class as a function'); } }
+
+function _inherits(subClass, superClass) { if (typeof superClass !== 'function' && superClass !== null) { throw new TypeError('Super expression must either be null or a function, not ' + typeof superClass); } subClass.prototype = Object.create(superClass && superClass.prototype, { constructor: { value: subClass, enumerable: false, writable: true, configurable: true } }); if (superClass) Object.setPrototypeOf ? Object.setPrototypeOf(subClass, superClass) : subClass.__proto__ = superClass; }
+
+var _react = require('react');
+
+var _react2 = _interopRequireDefault(_react);
+
+//include components
+
+var _InputGroupJs = require('./InputGroup.js');
+
+//create Input react component
+var Input = (function (_React$Component) {
+    _inherits(Input, _React$Component);
+
+    function Input(props) {
+        _classCallCheck(this, Input);
+
+        _get(Object.getPrototypeOf(Input.prototype), 'constructor', this).call(this, props);
+        //set initial state
+        this.state = {
+            changed: false,
+            value: this.props.value
+        };
+    }
+
+    _createClass(Input, [{
+        key: 'render',
+        value: function render() {
+            //set value of our input
+            var val = this.state.value;
+            //if our state's value is empty, and we received a new value from props
+            if (!this.state.changed && val == '' && this.props.value != '') {
+                //then update our value
+                val = this.props.value;
+            }
+            return _react2['default'].createElement(
+                _InputGroupJs.InputGroup,
+                { float: this.props.float },
+                _react2['default'].createElement(
+                    'label',
+                    { htmlFor: this.props.name },
+                    this.props.label
+                ),
+                _react2['default'].createElement('input', { type: this.props.type, name: this.props.name, value: val, onChange: this.handleChange.bind(this) })
+            );
+        }
+    }, {
+        key: 'handleChange',
+        value: function handleChange(e) {
+            //update value
+            this.setState({
+                changed: true,
+                value: e.target.value
+            });
+            //bubble event
+            if (typeof this.props.onChange == "function") {
+                this.props.onChange(e);
+            }
+        }
+    }]);
+
+    return Input;
+})(_react2['default'].Component);
+//define prop types
+Input.propTypes = {
+    name: _react2['default'].PropTypes.string,
+    label: _react2['default'].PropTypes.string,
+    type: _react2['default'].PropTypes.string,
+    value: _react2['default'].PropTypes.string,
+    float: _react2['default'].PropTypes.string,
+    onChange: _react2['default'].PropTypes.func
+};
+//export component
+exports.Input = Input;
+
+},{"./InputGroup.js":180,"react":170}],180:[function(require,module,exports){
+/* InputGroup.js
  * Displays a label and input in form
  * Dependencies: React
  * Author: Joshua Carter
@@ -49694,49 +55557,954 @@ var _react = require('react');
 
 var _react2 = _interopRequireDefault(_react);
 
-//create Input react component
-var Input = (function (_React$Component) {
-    _inherits(Input, _React$Component);
+//create InputGroup react component
+var InputGroup = (function (_React$Component) {
+    _inherits(InputGroup, _React$Component);
 
-    function Input() {
-        _classCallCheck(this, Input);
+    function InputGroup() {
+        _classCallCheck(this, InputGroup);
 
-        _get(Object.getPrototypeOf(Input.prototype), "constructor", this).apply(this, arguments);
+        _get(Object.getPrototypeOf(InputGroup.prototype), "constructor", this).apply(this, arguments);
     }
 
-    _createClass(Input, [{
+    _createClass(InputGroup, [{
         key: "render",
         value: function render() {
+            var className = "input-group";
+            if (this.props.float) {
+                className += " " + this.props.float;
+            }
+            if (this.props.className) {
+                className += " " + this.props.className;
+            }
             return _react2["default"].createElement(
                 "div",
-                { className: "input-group column two" },
-                _react2["default"].createElement(
-                    "label",
-                    { htmlFor: this.props.name },
-                    this.props.label
-                ),
-                _react2["default"].createElement("input", { type: this.props.type, name: this.props.name })
+                { className: className },
+                this.props.children
             );
         }
     }]);
 
-    return Input;
+    return InputGroup;
 })(_react2["default"].Component);
 //define prop types
-Input.propTypes = {
-    name: _react2["default"].PropTypes.string,
-    label: _react2["default"].PropTypes.string,
-    type: _react2["default"].PropTypes.string
+InputGroup.propTypes = {
+    float: _react2["default"].PropTypes.string,
+    className: _react2["default"].PropTypes.string
 };
 //export component
-exports.Input = Input;
+exports.InputGroup = InputGroup;
 
-},{"react":319}],323:[function(require,module,exports){
-/* Next.js
- * Displays the next button in form
- * Dependencies: React
+},{"react":170}],181:[function(require,module,exports){
+/* MaskedInput.js
+ * Displays a label and masked input in form
+ * Dependencies: React, InputElement, InputGroup components
  * Author: Joshua Carter
  * Created: December 23, 2015
+ */
+"use strict";
+//include modules
+Object.defineProperty(exports, '__esModule', {
+    value: true
+});
+
+var _createClass = (function () { function defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ('value' in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } } return function (Constructor, protoProps, staticProps) { if (protoProps) defineProperties(Constructor.prototype, protoProps); if (staticProps) defineProperties(Constructor, staticProps); return Constructor; }; })();
+
+var _get = function get(_x, _x2, _x3) { var _again = true; _function: while (_again) { var object = _x, property = _x2, receiver = _x3; _again = false; if (object === null) object = Function.prototype; var desc = Object.getOwnPropertyDescriptor(object, property); if (desc === undefined) { var parent = Object.getPrototypeOf(object); if (parent === null) { return undefined; } else { _x = parent; _x2 = property; _x3 = receiver; _again = true; desc = parent = undefined; continue _function; } } else if ('value' in desc) { return desc.value; } else { var getter = desc.get; if (getter === undefined) { return undefined; } return getter.call(receiver); } } };
+
+function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { 'default': obj }; }
+
+function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError('Cannot call a class as a function'); } }
+
+function _inherits(subClass, superClass) { if (typeof superClass !== 'function' && superClass !== null) { throw new TypeError('Super expression must either be null or a function, not ' + typeof superClass); } subClass.prototype = Object.create(superClass && superClass.prototype, { constructor: { value: subClass, enumerable: false, writable: true, configurable: true } }); if (superClass) Object.setPrototypeOf ? Object.setPrototypeOf(subClass, superClass) : subClass.__proto__ = superClass; }
+
+var _react = require('react');
+
+var _react2 = _interopRequireDefault(_react);
+
+//include components
+
+var _reactInputMask = require('react-input-mask');
+
+var _reactInputMask2 = _interopRequireDefault(_reactInputMask);
+
+var _InputGroupJs = require('./InputGroup.js');
+
+//create MaskedInput react component
+var MaskedInput = (function (_React$Component) {
+    _inherits(MaskedInput, _React$Component);
+
+    function MaskedInput(props) {
+        _classCallCheck(this, MaskedInput);
+
+        _get(Object.getPrototypeOf(MaskedInput.prototype), 'constructor', this).call(this, props);
+        //set initial state
+        this.state = {
+            changed: false,
+            value: this.props.value
+        };
+    }
+
+    _createClass(MaskedInput, [{
+        key: 'render',
+        value: function render() {
+            //set value of our input
+            var val = this.state.value;
+            //if our state's value is empty, and we received a new value from props
+            if (!this.state.changed && val == '' && this.props.value != '') {
+                //then update our value
+                val = this.props.value;
+            }
+            return _react2['default'].createElement(
+                _InputGroupJs.InputGroup,
+                { float: this.props.float },
+                _react2['default'].createElement(
+                    'label',
+                    { htmlFor: this.props.name },
+                    this.props.label
+                ),
+                _react2['default'].createElement(_reactInputMask2['default'], {
+                    type: this.props.type, name: this.props.name, value: val,
+                    onChange: this.handleChange.bind(this),
+                    mask: this.props.mask, maskChar: ' ', alwaysShowMask: true
+                })
+            );
+        }
+    }, {
+        key: 'handleChange',
+        value: function handleChange(e) {
+            //update value
+            this.setState({
+                changed: true,
+                value: e.target.value
+            });
+            //bubble event
+            if (typeof this.props.onChange == "function") {
+                this.props.onChange(e);
+            }
+        }
+    }]);
+
+    return MaskedInput;
+})(_react2['default'].Component);
+//define prop types
+MaskedInput.propTypes = {
+    name: _react2['default'].PropTypes.string,
+    label: _react2['default'].PropTypes.string,
+    type: _react2['default'].PropTypes.string,
+    value: _react2['default'].PropTypes.string,
+    float: _react2['default'].PropTypes.string,
+    onChange: _react2['default'].PropTypes.func,
+    mask: _react2['default'].PropTypes.string
+};
+//export component
+exports.MaskedInput = MaskedInput;
+
+},{"./InputGroup.js":180,"react":170,"react-input-mask":14}],182:[function(require,module,exports){
+/* Next.js
+ * Displays the next button in form
+ * Dependencies: React, InputGroup component
+ * Author: Joshua Carter
+ * Created: December 23, 2015
+ */
+"use strict";
+//include modules
+Object.defineProperty(exports, '__esModule', {
+    value: true
+});
+
+var _createClass = (function () { function defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ('value' in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } } return function (Constructor, protoProps, staticProps) { if (protoProps) defineProperties(Constructor.prototype, protoProps); if (staticProps) defineProperties(Constructor, staticProps); return Constructor; }; })();
+
+var _get = function get(_x, _x2, _x3) { var _again = true; _function: while (_again) { var object = _x, property = _x2, receiver = _x3; _again = false; if (object === null) object = Function.prototype; var desc = Object.getOwnPropertyDescriptor(object, property); if (desc === undefined) { var parent = Object.getPrototypeOf(object); if (parent === null) { return undefined; } else { _x = parent; _x2 = property; _x3 = receiver; _again = true; desc = parent = undefined; continue _function; } } else if ('value' in desc) { return desc.value; } else { var getter = desc.get; if (getter === undefined) { return undefined; } return getter.call(receiver); } } };
+
+function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { 'default': obj }; }
+
+function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError('Cannot call a class as a function'); } }
+
+function _inherits(subClass, superClass) { if (typeof superClass !== 'function' && superClass !== null) { throw new TypeError('Super expression must either be null or a function, not ' + typeof superClass); } subClass.prototype = Object.create(superClass && superClass.prototype, { constructor: { value: subClass, enumerable: false, writable: true, configurable: true } }); if (superClass) Object.setPrototypeOf ? Object.setPrototypeOf(subClass, superClass) : subClass.__proto__ = superClass; }
+
+var _react = require('react');
+
+var _react2 = _interopRequireDefault(_react);
+
+//include components
+
+var _InputGroupJs = require('./InputGroup.js');
+
+//create Next react component
+var Next = (function (_React$Component) {
+    _inherits(Next, _React$Component);
+
+    function Next() {
+        _classCallCheck(this, Next);
+
+        _get(Object.getPrototypeOf(Next.prototype), 'constructor', this).apply(this, arguments);
+    }
+
+    _createClass(Next, [{
+        key: 'render',
+        value: function render() {
+            return _react2['default'].createElement(
+                _InputGroupJs.InputGroup,
+                { float: 'right' },
+                _react2['default'].createElement(
+                    'button',
+                    { type: 'submit', name: 'next' },
+                    'Next ',
+                    _react2['default'].createElement(
+                        'span',
+                        { className: 'xyz-icon' },
+                        '1'
+                    )
+                )
+            );
+        }
+    }]);
+
+    return Next;
+})(_react2['default'].Component);
+//export component
+exports.Next = Next;
+
+},{"./InputGroup.js":180,"react":170}],183:[function(require,module,exports){
+/* Select.js
+ * Displays a label and select input in form
+ * Dependencies: React, InputGroup component
+ * Author: Joshua Carter
+ * Created: December 23, 2015
+ */
+"use strict";
+//include modules
+Object.defineProperty(exports, '__esModule', {
+    value: true
+});
+
+var _createClass = (function () { function defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ('value' in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } } return function (Constructor, protoProps, staticProps) { if (protoProps) defineProperties(Constructor.prototype, protoProps); if (staticProps) defineProperties(Constructor, staticProps); return Constructor; }; })();
+
+var _get = function get(_x, _x2, _x3) { var _again = true; _function: while (_again) { var object = _x, property = _x2, receiver = _x3; _again = false; if (object === null) object = Function.prototype; var desc = Object.getOwnPropertyDescriptor(object, property); if (desc === undefined) { var parent = Object.getPrototypeOf(object); if (parent === null) { return undefined; } else { _x = parent; _x2 = property; _x3 = receiver; _again = true; desc = parent = undefined; continue _function; } } else if ('value' in desc) { return desc.value; } else { var getter = desc.get; if (getter === undefined) { return undefined; } return getter.call(receiver); } } };
+
+function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { 'default': obj }; }
+
+function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError('Cannot call a class as a function'); } }
+
+function _inherits(subClass, superClass) { if (typeof superClass !== 'function' && superClass !== null) { throw new TypeError('Super expression must either be null or a function, not ' + typeof superClass); } subClass.prototype = Object.create(superClass && superClass.prototype, { constructor: { value: subClass, enumerable: false, writable: true, configurable: true } }); if (superClass) Object.setPrototypeOf ? Object.setPrototypeOf(subClass, superClass) : subClass.__proto__ = superClass; }
+
+var _react = require('react');
+
+var _react2 = _interopRequireDefault(_react);
+
+//include components
+
+var _InputGroupJs = require('./InputGroup.js');
+
+//create Select react component
+var Select = (function (_React$Component) {
+    _inherits(Select, _React$Component);
+
+    function Select(props) {
+        _classCallCheck(this, Select);
+
+        _get(Object.getPrototypeOf(Select.prototype), 'constructor', this).call(this, props);
+        //set initial state
+        this.state = {
+            changed: false,
+            value: this.props.value
+        };
+    }
+
+    _createClass(Select, [{
+        key: 'render',
+        value: function render() {
+            //set value of our input
+            var val = this.state.value,
+                optionNodes = [],
+                className = "select";
+            //loop options
+            for (var opt in this.props.options) {
+                optionNodes.push(_react2['default'].createElement(
+                    'option',
+                    { key: opt, val: opt },
+                    this.props.options[opt]
+                ));
+            };
+            //if we are small
+            if (this.props.small) {
+                className += " small";
+            }
+            //if our state's value is empty, and we received a new value from props
+            if (!this.state.changed && !val && this.props.value != '') {
+                //then update our value
+                val = this.props.value;
+            }
+            return _react2['default'].createElement(
+                _InputGroupJs.InputGroup,
+                { className: className, float: this.props.float },
+                _react2['default'].createElement(
+                    'label',
+                    { htmlFor: this.props.name },
+                    this.props.label
+                ),
+                _react2['default'].createElement(
+                    'select',
+                    { name: this.props.name, value: val, onChange: this.handleChange.bind(this) },
+                    optionNodes
+                ),
+                _react2['default'].createElement(
+                    'div',
+                    { className: 'select-background' },
+                    _react2['default'].createElement(
+                        'button',
+                        { className: 'xyz-icon' },
+                        '6'
+                    )
+                )
+            );
+        }
+    }, {
+        key: 'handleChange',
+        value: function handleChange(e) {
+            //update value
+            this.setState({
+                changed: true,
+                value: e.target.value
+            });
+            //bubble event
+            if (typeof this.props.onChange == "function") {
+                this.props.onChange(e);
+            }
+        }
+    }]);
+
+    return Select;
+})(_react2['default'].Component);
+//define prop types
+Select.propTypes = {
+    name: _react2['default'].PropTypes.string,
+    label: _react2['default'].PropTypes.string,
+    options: _react2['default'].PropTypes.object,
+    value: _react2['default'].PropTypes.node,
+    float: _react2['default'].PropTypes.string,
+    onChange: _react2['default'].PropTypes.func,
+    small: _react2['default'].PropTypes.bool
+};
+//export component
+exports.Select = Select;
+
+},{"./InputGroup.js":180,"react":170}],184:[function(require,module,exports){
+/* Submit.js
+ * Displays the submit button in form
+ * Dependencies: React, InputGroup component
+ * Author: Joshua Carter
+ * Created: December 31, 2015
+ */
+"use strict";
+//include modules
+Object.defineProperty(exports, '__esModule', {
+    value: true
+});
+
+var _createClass = (function () { function defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ('value' in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } } return function (Constructor, protoProps, staticProps) { if (protoProps) defineProperties(Constructor.prototype, protoProps); if (staticProps) defineProperties(Constructor, staticProps); return Constructor; }; })();
+
+var _get = function get(_x, _x2, _x3) { var _again = true; _function: while (_again) { var object = _x, property = _x2, receiver = _x3; _again = false; if (object === null) object = Function.prototype; var desc = Object.getOwnPropertyDescriptor(object, property); if (desc === undefined) { var parent = Object.getPrototypeOf(object); if (parent === null) { return undefined; } else { _x = parent; _x2 = property; _x3 = receiver; _again = true; desc = parent = undefined; continue _function; } } else if ('value' in desc) { return desc.value; } else { var getter = desc.get; if (getter === undefined) { return undefined; } return getter.call(receiver); } } };
+
+function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { 'default': obj }; }
+
+function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError('Cannot call a class as a function'); } }
+
+function _inherits(subClass, superClass) { if (typeof superClass !== 'function' && superClass !== null) { throw new TypeError('Super expression must either be null or a function, not ' + typeof superClass); } subClass.prototype = Object.create(superClass && superClass.prototype, { constructor: { value: subClass, enumerable: false, writable: true, configurable: true } }); if (superClass) Object.setPrototypeOf ? Object.setPrototypeOf(subClass, superClass) : subClass.__proto__ = superClass; }
+
+var _react = require('react');
+
+var _react2 = _interopRequireDefault(_react);
+
+//include components
+
+var _InputGroupJs = require('./InputGroup.js');
+
+//create Submit react component
+var Submit = (function (_React$Component) {
+    _inherits(Submit, _React$Component);
+
+    function Submit() {
+        _classCallCheck(this, Submit);
+
+        _get(Object.getPrototypeOf(Submit.prototype), 'constructor', this).apply(this, arguments);
+    }
+
+    _createClass(Submit, [{
+        key: 'render',
+        value: function render() {
+            return _react2['default'].createElement(
+                _InputGroupJs.InputGroup,
+                { float: 'right' },
+                _react2['default'].createElement(
+                    'button',
+                    { type: 'submit', name: 'next' },
+                    'Submit ',
+                    _react2['default'].createElement(
+                        'span',
+                        { className: 'xyz-icon' },
+                        '1'
+                    )
+                )
+            );
+        }
+    }]);
+
+    return Submit;
+})(_react2['default'].Component);
+//export component
+exports.Submit = Submit;
+
+},{"./InputGroup.js":180,"react":170}],185:[function(require,module,exports){
+/* StepOne.js
+ * Displays the team list
+ * Dependencies: React, 
+    - components: Input, Next
+    - services: FormStore, FormActions
+    - resources: $scope, $location
+ * Author: Joshua Carter
+ * Created: December 23, 2015
+ */
+"use strict";
+//include modules
+Object.defineProperty(exports, '__esModule', {
+    value: true
+});
+
+var _get = function get(_x, _x2, _x3) { var _again = true; _function: while (_again) { var object = _x, property = _x2, receiver = _x3; _again = false; if (object === null) object = Function.prototype; var desc = Object.getOwnPropertyDescriptor(object, property); if (desc === undefined) { var parent = Object.getPrototypeOf(object); if (parent === null) { return undefined; } else { _x = parent; _x2 = property; _x3 = receiver; _again = true; desc = parent = undefined; continue _function; } } else if ('value' in desc) { return desc.value; } else { var getter = desc.get; if (getter === undefined) { return undefined; } return getter.call(receiver); } } };
+
+var _createClass = (function () { function defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ('value' in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } } return function (Constructor, protoProps, staticProps) { if (protoProps) defineProperties(Constructor.prototype, protoProps); if (staticProps) defineProperties(Constructor, staticProps); return Constructor; }; })();
+
+function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { 'default': obj }; }
+
+function _inherits(subClass, superClass) { if (typeof superClass !== 'function' && superClass !== null) { throw new TypeError('Super expression must either be null or a function, not ' + typeof superClass); } subClass.prototype = Object.create(superClass && superClass.prototype, { constructor: { value: subClass, enumerable: false, writable: true, configurable: true } }); if (superClass) Object.setPrototypeOf ? Object.setPrototypeOf(subClass, superClass) : subClass.__proto__ = superClass; }
+
+function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError('Cannot call a class as a function'); } }
+
+var _react = require('react');
+
+var _react2 = _interopRequireDefault(_react);
+
+//include components
+
+var _sharedInputJs = require('../shared/Input.js');
+
+var _sharedNextJs = require('../shared/Next.js');
+
+//create controller for StepOne
+var StepOneController = (function () {
+    function StepOneController($scope, $location, FormStore, FormActions) {
+        _classCallCheck(this, StepOneController);
+
+        //create listener for changes on the store
+        var changeListener = (function () {
+            this.getFormFields();
+            //this function is called outside of Angular, apply changes to scope
+            $scope.$apply();
+        }).bind(this);
+
+        this.FormStore = FormStore;
+        this.FormActions = FormActions;
+        //create method to got to step two
+        this.navNext = function () {
+            $location.path('/step-2');
+            $scope.$apply();
+        };
+
+        //add listener for changes on store
+        FormStore.addChangeListener(changeListener);
+        //remove listener when we are gone
+        $scope.$on('$destroy', function () {
+            FormStore.removeChangeListener(changeListener);
+        });
+
+        //get initial state
+        this.getFormFields();
+    }
+
+    _createClass(StepOneController, [{
+        key: 'getFormFields',
+        value: function getFormFields() {
+            this.fields = this.FormStore.getFields(['first', 'last', 'email', 'zip']);
+        }
+    }]);
+
+    return StepOneController;
+})(),
+
+//create StepOne React component
+StepOne = (function (_React$Component) {
+    _inherits(StepOne, _React$Component);
+
+    function StepOne(props) {
+        _classCallCheck(this, StepOne);
+
+        _get(Object.getPrototypeOf(StepOne.prototype), 'constructor', this).call(this, props);
+        //create collection to store field values
+        this.fields = {};
+    }
+
+    _createClass(StepOne, [{
+        key: 'render',
+        value: function render() {
+            return _react2['default'].createElement(
+                'form',
+                { name: 'featured', method: 'get', action: '#', onSubmit: this.handleSubmit.bind(this) },
+                _react2['default'].createElement(_sharedInputJs.Input, {
+                    type: 'text', name: 'first', label: 'First Name', float: 'left',
+                    value: this.props.t.fields.first,
+                    onChange: this.createHandleChange('first').bind(this)
+                }),
+                _react2['default'].createElement(_sharedInputJs.Input, {
+                    type: 'text', name: 'last', label: 'Last Name', float: 'right',
+                    value: this.props.t.fields.last,
+                    onChange: this.createHandleChange('last').bind(this)
+                }),
+                _react2['default'].createElement(_sharedInputJs.Input, {
+                    type: 'text', name: 'email', label: 'Email Address', float: 'left',
+                    value: this.props.t.fields.email,
+                    onChange: this.createHandleChange('email').bind(this)
+                }),
+                _react2['default'].createElement(_sharedInputJs.Input, {
+                    type: 'text', name: 'zip', label: 'Zip Code', float: 'right',
+                    value: this.props.t.fields.zip,
+                    onChange: this.createHandleChange('zip').bind(this)
+                }),
+                _react2['default'].createElement(_sharedNextJs.Next, null)
+            );
+        }
+    }, {
+        key: 'handleSubmit',
+        value: function handleSubmit(e) {
+            //prevent default
+            e.preventDefault();
+            //update form data
+            this.props.t.FormActions.update(this.fields);
+            //go to the next page
+            this.props.t.navNext();
+        }
+
+        //create change event listener that updates specified field value
+    }, {
+        key: 'createHandleChange',
+        value: function createHandleChange(field) {
+            return function (e) {
+                this.fields[field] = e.target.value;
+            };
+        }
+    }]);
+
+    return StepOne;
+})(_react2['default'].Component),
+
+//create directive to wrap React component in
+StepOneDirective = function StepOneDirective(reactDirective) {
+    return reactDirective(StepOne, undefined, {
+        controller: StepOneController,
+        controllerAs: 'scope'
+    });
+};
+//inject services and resources into controller
+StepOneController.$inject = ['$scope', '$location', 'FormStore', 'FormActions'];
+//define prop types of StepOne componnet
+StepOne.propTypes = {
+    t: _react2['default'].PropTypes.object
+};
+//inject resources into directive
+StepOneDirective.$inject = ['reactDirective'];
+//export StepOne directive
+exports.StepOneDirective = StepOneDirective;
+
+},{"../shared/Input.js":179,"../shared/Next.js":182,"react":170}],186:[function(require,module,exports){
+/* StepThree.js
+ * Displays step three
+ * Dependencies: React
+    - components: MaskedInput, Input, Select, Back, Submit
+    - services: FormStore, FormActions
+    - resources: $scope, $location
+ * Author: Joshua Carter
+ * Created: December 23, 2015
+ */
+"use strict";
+//include modules
+Object.defineProperty(exports, '__esModule', {
+    value: true
+});
+
+var _get = function get(_x, _x2, _x3) { var _again = true; _function: while (_again) { var object = _x, property = _x2, receiver = _x3; _again = false; if (object === null) object = Function.prototype; var desc = Object.getOwnPropertyDescriptor(object, property); if (desc === undefined) { var parent = Object.getPrototypeOf(object); if (parent === null) { return undefined; } else { _x = parent; _x2 = property; _x3 = receiver; _again = true; desc = parent = undefined; continue _function; } } else if ('value' in desc) { return desc.value; } else { var getter = desc.get; if (getter === undefined) { return undefined; } return getter.call(receiver); } } };
+
+var _createClass = (function () { function defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ('value' in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } } return function (Constructor, protoProps, staticProps) { if (protoProps) defineProperties(Constructor.prototype, protoProps); if (staticProps) defineProperties(Constructor, staticProps); return Constructor; }; })();
+
+function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { 'default': obj }; }
+
+function _inherits(subClass, superClass) { if (typeof superClass !== 'function' && superClass !== null) { throw new TypeError('Super expression must either be null or a function, not ' + typeof superClass); } subClass.prototype = Object.create(superClass && superClass.prototype, { constructor: { value: subClass, enumerable: false, writable: true, configurable: true } }); if (superClass) Object.setPrototypeOf ? Object.setPrototypeOf(subClass, superClass) : subClass.__proto__ = superClass; }
+
+function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError('Cannot call a class as a function'); } }
+
+var _react = require('react');
+
+var _react2 = _interopRequireDefault(_react);
+
+//include components
+
+var _sharedMaskedInputJs = require('../shared/MaskedInput.js');
+
+var _sharedInputJs = require('../shared/Input.js');
+
+var _sharedSelectJs = require('../shared/Select.js');
+
+var _sharedBackJs = require('../shared/Back.js');
+
+var _sharedSubmitJs = require('../shared/Submit.js');
+
+//create controller for StepThree
+var StepThreeController = (function () {
+    function StepThreeController($scope, $location, FormStore, FormActions) {
+        _classCallCheck(this, StepThreeController);
+
+        //create listener for changes on the store
+        var changeListener = (function () {
+            this.getFormFields();
+            //this function is called outside of Angular, apply changes to scope
+            $scope.$apply();
+        }).bind(this);
+
+        this.FormStore = FormStore;
+        this.FormActions = FormActions;
+        //create method to back
+        this.navBack = function () {
+            $location.path('/step-2');
+            $scope.$apply();
+        };
+
+        //add listener for changes on store
+        FormStore.addChangeListener(changeListener);
+        //remove listener when we are gone
+        $scope.$on('$destroy', function () {
+            FormStore.removeChangeListener(changeListener);
+        });
+
+        //get initial state
+        this.getFormFields();
+    }
+
+    _createClass(StepThreeController, [{
+        key: 'getFormFields',
+        value: function getFormFields() {
+            this.fields = this.FormStore.getFields(['paydate1', 'paydate2', 'employment', 'employer']);
+        }
+    }]);
+
+    return StepThreeController;
+})(),
+
+//create StepThree React component
+StepThree = (function (_React$Component) {
+    _inherits(StepThree, _React$Component);
+
+    function StepThree(props) {
+        _classCallCheck(this, StepThree);
+
+        _get(Object.getPrototypeOf(StepThree.prototype), 'constructor', this).call(this, props);
+        //create collection to store field values
+        this.fields = {};
+    }
+
+    _createClass(StepThree, [{
+        key: 'render',
+        value: function render() {
+            //create list of employment types
+            var employment = {
+                0: "Select",
+                contract: "Contract",
+                full: "Full-Time",
+                part: "Part-Time",
+                self: "Self-Employed",
+                temp: "Temporary"
+            };
+            return _react2['default'].createElement(
+                'form',
+                { name: 'featured', method: 'get', action: '#', onSubmit: this.handleSubmit.bind(this) },
+                _react2['default'].createElement(_sharedMaskedInputJs.MaskedInput, {
+                    type: 'text', name: 'paydate1', label: 'Pay Date 1', float: 'left',
+                    value: this.props.t.fields.paydate1,
+                    onChange: this.createHandleChange('paydate1').bind(this),
+                    mask: '99 / 99 / 9999'
+                }),
+                _react2['default'].createElement(_sharedMaskedInputJs.MaskedInput, {
+                    type: 'text', name: 'paydate2', label: 'Pay Date 2', float: 'right',
+                    value: this.props.t.fields.paydate2,
+                    onChange: this.createHandleChange('paydate2').bind(this),
+                    mask: '99 / 99 / 9999'
+                }),
+                _react2['default'].createElement(_sharedSelectJs.Select, {
+                    name: 'employment', label: 'Employment Type', float: 'left',
+                    options: employment, small: true,
+                    value: this.props.t.fields.employment,
+                    onChange: this.createHandleChange('employment').bind(this)
+                }),
+                _react2['default'].createElement(_sharedInputJs.Input, {
+                    type: 'text', name: 'employer', label: 'Employer Name', float: 'right',
+                    value: this.props.t.fields.employer,
+                    onChange: this.createHandleChange('employer').bind(this)
+                }),
+                _react2['default'].createElement(_sharedBackJs.Back, { onClick: this.handleBack.bind(this) }),
+                _react2['default'].createElement(_sharedSubmitJs.Submit, null)
+            );
+        }
+    }, {
+        key: 'handleSubmit',
+        value: function handleSubmit(e) {
+            //prevent default
+            e.preventDefault();
+            //update form data
+            this.props.t.FormActions.update(this.fields);
+            //submit form
+            this.props.t.FormActions.submit();
+        }
+    }, {
+        key: 'handleBack',
+        value: function handleBack(e) {
+            //prevent default
+            e.preventDefault();
+            //go to previous page
+            this.props.t.navBack();
+        }
+
+        //create change event listener that updates specified field value
+    }, {
+        key: 'createHandleChange',
+        value: function createHandleChange(field) {
+            return function (e) {
+                this.fields[field] = e.target.value;
+            };
+        }
+    }]);
+
+    return StepThree;
+})(_react2['default'].Component),
+
+//create directive to wrap React component in
+StepThreeDirective = function StepThreeDirective(reactDirective) {
+    return reactDirective(StepThree, undefined, {
+        controller: StepThreeController,
+        controllerAs: 'scope'
+    });
+};
+//inject services and resources into controller
+StepThreeController.$inject = ['$scope', '$location', 'FormStore', 'FormActions'];
+//define prop types of StepThree componnet
+StepThree.propTypes = {
+    t: _react2['default'].PropTypes.object
+};
+//inject resources into directive
+StepThreeDirective.$inject = ['reactDirective'];
+//export StepThree directive
+exports.StepThreeDirective = StepThreeDirective;
+
+},{"../shared/Back.js":178,"../shared/Input.js":179,"../shared/MaskedInput.js":181,"../shared/Select.js":183,"../shared/Submit.js":184,"react":170}],187:[function(require,module,exports){
+/* StepTwo.js
+ * Displays step two
+ * Dependencies: React, us
+    - components: MaskedInput, Input, Select, Back, Next
+    - services: FormStore, FormActions
+    - resources: $scope, $location
+ * Author: Joshua Carter
+ * Created: December 23, 2015
+ */
+"use strict";
+//include modules
+Object.defineProperty(exports, '__esModule', {
+    value: true
+});
+
+var _get = function get(_x, _x2, _x3) { var _again = true; _function: while (_again) { var object = _x, property = _x2, receiver = _x3; _again = false; if (object === null) object = Function.prototype; var desc = Object.getOwnPropertyDescriptor(object, property); if (desc === undefined) { var parent = Object.getPrototypeOf(object); if (parent === null) { return undefined; } else { _x = parent; _x2 = property; _x3 = receiver; _again = true; desc = parent = undefined; continue _function; } } else if ('value' in desc) { return desc.value; } else { var getter = desc.get; if (getter === undefined) { return undefined; } return getter.call(receiver); } } };
+
+var _createClass = (function () { function defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ('value' in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } } return function (Constructor, protoProps, staticProps) { if (protoProps) defineProperties(Constructor.prototype, protoProps); if (staticProps) defineProperties(Constructor, staticProps); return Constructor; }; })();
+
+function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { 'default': obj }; }
+
+function _inherits(subClass, superClass) { if (typeof superClass !== 'function' && superClass !== null) { throw new TypeError('Super expression must either be null or a function, not ' + typeof superClass); } subClass.prototype = Object.create(superClass && superClass.prototype, { constructor: { value: subClass, enumerable: false, writable: true, configurable: true } }); if (superClass) Object.setPrototypeOf ? Object.setPrototypeOf(subClass, superClass) : subClass.__proto__ = superClass; }
+
+function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError('Cannot call a class as a function'); } }
+
+var _react = require('react');
+
+var _react2 = _interopRequireDefault(_react);
+
+var _us = require('us');
+
+var _us2 = _interopRequireDefault(_us);
+
+//include components
+
+var _sharedMaskedInputJs = require('../shared/MaskedInput.js');
+
+var _sharedInputJs = require('../shared/Input.js');
+
+var _sharedSelectJs = require('../shared/Select.js');
+
+var _sharedBackJs = require('../shared/Back.js');
+
+var _sharedNextJs = require('../shared/Next.js');
+
+//create controller for StepTwo
+var StepTwoController = (function () {
+    function StepTwoController($scope, $location, FormStore, FormActions) {
+        _classCallCheck(this, StepTwoController);
+
+        //use us module to get list of states
+        var usst = _us2['default'].STATES_AND_TERRITORIES,
+
+        //create listener for changes on the store
+        changeListener = (function () {
+            this.getFormFields();
+            //this function is called outside of Angular, apply changes to scope
+            $scope.$apply();
+        }).bind(this);
+
+        //create collection of states for select list   
+        this.states = { 0: "Select" };
+        for (var i = 0; i < usst.length; i++) {
+            //add state
+            this.states[usst[i].abbr] = usst[i].abbr;
+        }
+
+        this.FormStore = FormStore;
+        this.FormActions = FormActions;
+        //create methods to back and forwards
+        this.navNext = function () {
+            $location.path('/step-3');
+            $scope.$apply();
+        };
+        this.navBack = function () {
+            $location.path('/');
+            $scope.$apply();
+        };
+
+        //add listener for changes on store
+        FormStore.addChangeListener(changeListener);
+        //remove listener when we are gone
+        $scope.$on('$destroy', function () {
+            FormStore.removeChangeListener(changeListener);
+        });
+
+        //get initial state
+        this.getFormFields();
+    }
+
+    _createClass(StepTwoController, [{
+        key: 'getFormFields',
+        value: function getFormFields() {
+            this.fields = this.FormStore.getFields(['city', 'state', 'birth', 'phone']);
+        }
+    }]);
+
+    return StepTwoController;
+})(),
+
+//create StepTwo React component
+StepTwo = (function (_React$Component) {
+    _inherits(StepTwo, _React$Component);
+
+    function StepTwo(props) {
+        _classCallCheck(this, StepTwo);
+
+        _get(Object.getPrototypeOf(StepTwo.prototype), 'constructor', this).call(this, props);
+        //create collection to store field values
+        this.fields = {};
+    }
+
+    _createClass(StepTwo, [{
+        key: 'render',
+        value: function render() {
+            return _react2['default'].createElement(
+                'form',
+                { name: 'featured', method: 'get', action: '#', onSubmit: this.handleSubmit.bind(this) },
+                _react2['default'].createElement(_sharedInputJs.Input, {
+                    type: 'text', name: 'city', label: 'City', float: 'left',
+                    value: this.props.t.fields.city,
+                    onChange: this.createHandleChange('city').bind(this)
+                }),
+                _react2['default'].createElement(_sharedSelectJs.Select, {
+                    name: 'state', label: 'State', float: 'right',
+                    options: this.props.t.states,
+                    value: this.props.t.fields.state,
+                    onChange: this.createHandleChange('state').bind(this)
+                }),
+                _react2['default'].createElement(_sharedMaskedInputJs.MaskedInput, {
+                    type: 'text', name: 'birth', label: 'Birthdate', float: 'left',
+                    value: this.props.t.fields.birth,
+                    onChange: this.createHandleChange('birth').bind(this),
+                    mask: '99 / 99 / 9999'
+                }),
+                _react2['default'].createElement(_sharedMaskedInputJs.MaskedInput, {
+                    type: 'tel', name: 'phone', label: 'Phone Number', float: 'right',
+                    value: this.props.t.fields.phone,
+                    onChange: this.createHandleChange('phone').bind(this),
+                    mask: '999 - 999 - 9999'
+                }),
+                _react2['default'].createElement(_sharedBackJs.Back, { onClick: this.handleBack.bind(this) }),
+                _react2['default'].createElement(_sharedNextJs.Next, null)
+            );
+        }
+    }, {
+        key: 'handleSubmit',
+        value: function handleSubmit(e) {
+            //prevent default
+            e.preventDefault();
+            //update form data
+            this.props.t.FormActions.update(this.fields);
+            //go to the next page
+            this.props.t.navNext();
+        }
+    }, {
+        key: 'handleBack',
+        value: function handleBack(e) {
+            //prevent default
+            e.preventDefault();
+            //go to previous page
+            this.props.t.navBack();
+        }
+
+        //create change event listener that updates specified field value
+    }, {
+        key: 'createHandleChange',
+        value: function createHandleChange(field) {
+            return function (e) {
+                this.fields[field] = e.target.value;
+            };
+        }
+    }]);
+
+    return StepTwo;
+})(_react2['default'].Component),
+
+//create directive to wrap React component in
+StepTwoDirective = function StepTwoDirective(reactDirective) {
+    return reactDirective(StepTwo, undefined, {
+        controller: StepTwoController,
+        controllerAs: 'scope'
+    });
+};
+//inject services and resources into controller
+StepTwoController.$inject = ['$scope', '$location', 'FormStore', 'FormActions'];
+//define prop types of StepTwo componnet
+StepTwo.propTypes = {
+    t: _react2['default'].PropTypes.object
+};
+//inject resources into directive
+StepTwoDirective.$inject = ['reactDirective'];
+//export StepTwo directive
+exports.StepTwoDirective = StepTwoDirective;
+
+},{"../shared/Back.js":178,"../shared/Input.js":179,"../shared/MaskedInput.js":181,"../shared/Next.js":182,"../shared/Select.js":183,"react":170,"us":171}],188:[function(require,module,exports){
+/* Menu.js
+ * Displays the responsive menu
+ * Dependencies: React
+ * Author: Joshua Carter
+ * Created: December 30, 2015
  */
 "use strict";
 //include modules
@@ -49758,113 +56526,135 @@ var _react = require('react');
 
 var _react2 = _interopRequireDefault(_react);
 
-//create Next react component
-var Next = (function (_React$Component) {
-    _inherits(Next, _React$Component);
+//create Menu React component
+var Menu = (function (_React$Component) {
+    _inherits(Menu, _React$Component);
 
-    function Next() {
-        _classCallCheck(this, Next);
+    function Menu(props) {
+        _classCallCheck(this, Menu);
 
-        _get(Object.getPrototypeOf(Next.prototype), "constructor", this).apply(this, arguments);
+        _get(Object.getPrototypeOf(Menu.prototype), "constructor", this).call(this, props);
+
+        //set initial state
+        this.state = { "class": "" };
     }
 
-    _createClass(Next, [{
+    _createClass(Menu, [{
         key: "render",
         value: function render() {
-            return _react2["default"].createElement("input", { className: "column two right", type: "submit", name: "next", value: "Next" });
-        }
-    }]);
-
-    return Next;
-})(_react2["default"].Component);
-//export component
-exports.Next = Next;
-
-},{"react":319}],324:[function(require,module,exports){
-/* StepOne.js
- * Displays the team list
- * Dependencies: React, 
-    - components: Input, Next
-    - services: 
-    - resources: 
- * Author: Joshua Carter
- * Created: December 23, 2015
- */
-"use strict";
-//include modules
-Object.defineProperty(exports, '__esModule', {
-    value: true
-});
-
-var _createClass = (function () { function defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ('value' in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } } return function (Constructor, protoProps, staticProps) { if (protoProps) defineProperties(Constructor.prototype, protoProps); if (staticProps) defineProperties(Constructor, staticProps); return Constructor; }; })();
-
-var _get = function get(_x, _x2, _x3) { var _again = true; _function: while (_again) { var object = _x, property = _x2, receiver = _x3; _again = false; if (object === null) object = Function.prototype; var desc = Object.getOwnPropertyDescriptor(object, property); if (desc === undefined) { var parent = Object.getPrototypeOf(object); if (parent === null) { return undefined; } else { _x = parent; _x2 = property; _x3 = receiver; _again = true; desc = parent = undefined; continue _function; } } else if ('value' in desc) { return desc.value; } else { var getter = desc.get; if (getter === undefined) { return undefined; } return getter.call(receiver); } } };
-
-function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { 'default': obj }; }
-
-function _inherits(subClass, superClass) { if (typeof superClass !== 'function' && superClass !== null) { throw new TypeError('Super expression must either be null or a function, not ' + typeof superClass); } subClass.prototype = Object.create(superClass && superClass.prototype, { constructor: { value: subClass, enumerable: false, writable: true, configurable: true } }); if (superClass) Object.setPrototypeOf ? Object.setPrototypeOf(subClass, superClass) : subClass.__proto__ = superClass; }
-
-function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError('Cannot call a class as a function'); } }
-
-var _react = require('react');
-
-var _react2 = _interopRequireDefault(_react);
-
-//include components
-
-var _sharedInputJs = require('../shared/Input.js');
-
-var _sharedNextJs = require('../shared/Next.js');
-
-//create controller for StepOne
-var StepOneController = function StepOneController() {
-    _classCallCheck(this, StepOneController);
-},
-
-//create StepOne React component
-StepOne = (function (_React$Component) {
-    _inherits(StepOne, _React$Component);
-
-    function StepOne() {
-        _classCallCheck(this, StepOne);
-
-        _get(Object.getPrototypeOf(StepOne.prototype), 'constructor', this).apply(this, arguments);
-    }
-
-    _createClass(StepOne, [{
-        key: 'render',
-        value: function render() {
-            return _react2['default'].createElement(
-                'form',
-                { name: 'featured', method: 'get', action: '#' },
-                _react2['default'].createElement(_sharedInputJs.Input, { type: 'text', name: 'first', label: 'First Name' }),
-                _react2['default'].createElement(_sharedInputJs.Input, { type: 'text', name: 'last', label: 'Last Name' }),
-                _react2['default'].createElement(_sharedInputJs.Input, { type: 'text', name: 'email', label: 'Email Address' }),
-                _react2['default'].createElement(_sharedInputJs.Input, { type: 'text', name: 'zip', label: 'Zip Code' }),
-                _react2['default'].createElement(_sharedNextJs.Next, null)
+            //the entire header is rendered so that
+            //we can control both the mobile dropdown button and the nav menu
+            //the only dynamic pieces are
+            // - the click handler on the #nav-dropdown button
+            // - the class name of the <nav> menu.
+            return _react2["default"].createElement(
+                "header",
+                null,
+                _react2["default"].createElement(
+                    "div",
+                    { className: "container", id: "top-bar" },
+                    _react2["default"].createElement(
+                        "div",
+                        { className: "logo left" },
+                        _react2["default"].createElement(
+                            "a",
+                            { href: "#" },
+                            _react2["default"].createElement("img", { src: "img/devtest-whitelogo.svg", alt: "DEVTEST.xyz" })
+                        )
+                    ),
+                    _react2["default"].createElement(
+                        "div",
+                        { id: "search-bar", className: "form-container right" },
+                        _react2["default"].createElement(
+                            "form",
+                            { action: "#", method: "get", name: "header-search" },
+                            _react2["default"].createElement("input", { name: "query", type: "text", placeholder: "Type your search here..." }),
+                            _react2["default"].createElement(
+                                "button",
+                                { className: "xyz-icon", name: "submit", type: "submit" },
+                                "2"
+                            )
+                        )
+                    ),
+                    _react2["default"].createElement(
+                        "div",
+                        { className: "form-container right" },
+                        _react2["default"].createElement(
+                            "button",
+                            {
+                                id: "nav-dropdown",
+                                className: "xyz-icon",
+                                onClick: this.handleClick.bind(this)
+                            },
+                            "6"
+                        )
+                    )
+                ),
+                _react2["default"].createElement(
+                    "nav",
+                    { className: this.state["class"] },
+                    _react2["default"].createElement(
+                        "a",
+                        { href: "#/" },
+                        "About"
+                    ),
+                    _react2["default"].createElement(
+                        "a",
+                        { href: "#/" },
+                        "Rates"
+                    ),
+                    _react2["default"].createElement(
+                        "a",
+                        { href: "#/" },
+                        "Requirements"
+                    ),
+                    _react2["default"].createElement(
+                        "a",
+                        { href: "#/" },
+                        "FAQ"
+                    ),
+                    _react2["default"].createElement(
+                        "a",
+                        { href: "#/", className: "last" },
+                        "Apply!"
+                    )
+                )
             );
         }
+    }, {
+        key: "handleClick",
+        value: function handleClick() {
+            this.setState({ "class": this.state["class"] == "" ? "show" : "" });
+        }
+    }, {
+        key: "componentDidMount",
+        value: function componentDidMount() {
+            this.runOutsideJS();
+        }
+    }, {
+        key: "componentDidUpdate",
+        value: function componentDidUpdate() {
+            this.runOutsideJS();
+        }
+    }, {
+        key: "runOutsideJS",
+        value: function runOutsideJS() {
+            window.runAfterReact();
+        }
     }]);
 
-    return StepOne;
-})(_react2['default'].Component),
+    return Menu;
+})(_react2["default"].Component),
 
 //create directive to wrap React component in
-StepOneDirective = function StepOneDirective(reactDirective) {
-    return reactDirective(StepOne, undefined, {
-        controller: StepOneController,
-        controllerAs: 'scope'
+MenuDirective = function MenuDirective(reactDirective) {
+    return reactDirective(Menu, undefined, {
+        restrict: 'A'
     });
 };
-//inject services and resources into controller
-StepOneController.$inject = [];
-//define prop types of StepOne componnet
-StepOne.propTypes = {
-    t: _react2['default'].PropTypes.object
-};
 //inject resources into directive
-StepOneDirective.$inject = ['reactDirective'];
-//export StepOne directive
-exports.StepOneDirective = StepOneDirective;
+MenuDirective.$inject = ['reactDirective'];
+//export Menu directive
+exports.MenuDirective = MenuDirective;
 
-},{"../shared/Input.js":322,"../shared/Next.js":323,"react":319}]},{},[320]);
+},{"react":170}]},{},[172]);
