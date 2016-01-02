@@ -40,6 +40,10 @@ h1, h2, h3, h4, h5, h6, a {
     color: #E15260;
 }
 
+a:hover, a:active {
+    color: #2AAAFF;
+}
+
 h3, h4, h5, h6 {
     letter-spacing: 1px;
     text-shadow: 1px 0 0px #F9E0E2;
@@ -106,6 +110,11 @@ p {
 
 .xyz-icon {
     font-family: devtestxyz;
+}
+
+* {
+    transition: all 0.3s ease;
+    -webkit-transition: all 0.3s ease;
 }
 
 
@@ -198,6 +207,13 @@ p {
     width: 125px;
 }
 
+.form-container button:hover, 
+.form-container button:active,
+.form-container .select:hover button, 
+.form-container .select:active button {
+    background-color: #F17C4D;
+}
+
 .form-container span {
     display: block;
     float: left;
@@ -222,6 +238,10 @@ p {
 /* PART 3 SECTION 1: Header */
 header {
     padding: 0;
+}
+
+header a:hover, header a:active {
+    color: #000;
 }
 
 header #top-bar {
@@ -443,8 +463,8 @@ footer p {
     header .form-container { width: 20px; }
     #nav-dropdown { padding: 5px; width: 20px; }
 
-    header nav { display: none; }
-    header nav.show { display: block; }
+    header nav { opacity: 0; visibility: hidden; }
+    header nav.show { opacity: 1; visibility: visible; }
     header nav { 
         background-color: #F69679; 
         border: 0;  
