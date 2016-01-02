@@ -10,7 +10,6 @@ import React from 'react';
 //include components
 import InputElement from 'react-input-mask';
 import { InputGroup } from './InputGroup.js';
-console.log(InputElement);
 //create MaskedInput react component
 var MaskedInput = class extends React.Component {
     constructor (props) {
