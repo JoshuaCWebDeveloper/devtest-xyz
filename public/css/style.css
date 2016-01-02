@@ -309,6 +309,36 @@ header nav a {
     height: 399px;
 }
 
+/* use Angular to animate form pages */
+.ng-view-container {
+    overflow: hidden;
+    position: relative;
+    height: 300px;
+    width: 100%;
+}
+
+.ng-view-container section {
+    position: absolute;
+        top: 0;
+        right: 0;
+        bottom: 0;
+        left: 0;
+    overflow: hidden;
+    width: 100%;
+}
+
+.ng-view-container .ng-enter {
+  left:100%;
+}
+
+.ng-view-container .ng-enter.ng-enter-active {
+  left:0;
+}
+
+.ng-view-container .ng-leave.ng-leave-active {
+  left:-100%;
+}
+
 
 /* PART 4: Page Content */
 .content {

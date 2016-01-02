@@ -1,7 +1,7 @@
 /* app.js
  * Used to setup app. 
  * Dependencies: 
-    - modules: angular, angular-route, react, ngReact
+    - modules: angular, angular-route, angular-animate, react, ngReact
     - components: StepOneDirective, StepTwoDirective, StepThreeDirective
     - services: FormDispatcher, FormStore, FormActions
     - other: config
@@ -12,6 +12,7 @@
 //include modules
 import angular from 'angular';
 import ngRouteModule from 'angular-route';
+import ngAnimate from 'angular-animate';
 import React from 'react';
 import ngReact from 'ngreact';
 //include components
@@ -27,7 +28,7 @@ import { GetLocation } from './form/services/GetLocation.js';
 //include other objects
 import { config } from './config.js';
 //create app module
-var app = angular.module('DEVTEST.xyz', ['react', 'ngRoute'])
+var app = angular.module('DEVTEST.xyz', ['react', 'ngRoute', 'ngAnimate'])
     .config(['$routeProvider', config])
     //create constants
     .constant('FORM_ACTIONS', {
