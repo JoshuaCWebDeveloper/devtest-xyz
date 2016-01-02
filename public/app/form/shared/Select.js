@@ -73,7 +73,7 @@ Select.propTypes = {
     value: React.PropTypes.node,
     float: React.PropTypes.string,
     onChange: React.PropTypes.func,
-    small: React.PropTypes.node
+    small: React.PropTypes.bool
 };
 //export component
 export { Select };
