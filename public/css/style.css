@@ -474,6 +474,7 @@ footer p {
             top: 70px;
             left: 0;
         width: 100%;
+        z-index: 100;
      }
     header nav a { float: none; margin: 0; padding: 15px 0; text-align: center; }
     header nav a.last { padding-bottom: 30px; }
