@@ -14,6 +14,9 @@ var InputGroup = class extends React.Component {
         if (this.props.float) {
             className += " " + this.props.float;
         }
+        if (this.props.className) {
+            className += " " + this.props.className;
+        }
         return (
             <div className={className}>
                 {this.props.children}
@@ -23,7 +26,8 @@ var InputGroup = class extends React.Component {
 };
 //define prop types
 InputGroup.propTypes = {
-    float: React.PropTypes.string
+    float: React.PropTypes.string,
+    className: React.PropTypes.string
 };
 //export component
 export { InputGroup };
