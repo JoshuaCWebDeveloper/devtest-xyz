@@ -9,7 +9,9 @@
     "flux": "^2.1.1",
     "ngreact": "^0.2.0",
     "react": "^0.14.3",
-    "react-dom": "^0.14.3"
+    "react-dom": "^0.14.3",
+    "react-input-mask": "^0.5.10",
+    "us": "^1.1.1"
   },
   "devDependencies": {
     "babelify": "^6.3.0",
