@@ -214,6 +214,7 @@ p {
 /* PART 3: Top Red "Featured" section */
 .featured {
     background-color: #E15260;
+    background: radial-gradient(400px at 50% 105%, #FF848D, #E15260);
     padding-bottom: 150px;
     width: 100%;
 }
